@@ -1,4 +1,7 @@
 [package]
+authors = ["mkpankov"]
 name = "shurik"
 version = "0.1.0"
-authors = ["mkpankov"]
+
+[dependencies]
+clap = "1.4.7"
