@@ -51,6 +51,17 @@ fn handle_mr(req: &mut Request) -> IronResult<Response> {
         panic!("Couldn't checkout the workspace: {}", status)
     }
 
+    let status = Command::new("cargo")
+        .arg("build")
+        .current_dir("workspace/shurik")
+        .status()
+        .unwrap_or_else(|e| {
+            panic!("failed to execute process: {}", e)
+        });
+    if ! ExitStatus::success(&status) {
+        panic!("Couldn't build in the workspace: {}", status)
+    }
+
     return Ok(Response::with(status::Ok));
     Err(iron::error::IronError::new(MyError, status::BadRequest))
 }
