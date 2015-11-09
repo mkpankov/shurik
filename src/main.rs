@@ -6,6 +6,7 @@ extern crate serde_json;
 use clap::App;
 use iron::*;
 
+use std::process::{Command, ExitStatus};
 use std::io::Read;
 
 #[derive(Debug)]
@@ -35,6 +36,20 @@ fn handle_mr(req: &mut Request) -> IronResult<Response> {
     println!("data: {:?}", json);
     // data: {"bar":"baz","foo":13}
     println!("object? {}", json.is_object());
+    let obj = json.as_object().unwrap();
+    let checkout_sha = obj.get("checkout_sha").unwrap();
+    let arg = checkout_sha.as_string().unwrap();
+
+    let status = Command::new("git")
+        .arg("checkout").arg(arg)
+        .current_dir("workspace/shurik")
+        .status()
+        .unwrap_or_else(|e| {
+            panic!("failed to execute process: {}", e)
+        });
+    if ! ExitStatus::success(&status) {
+        panic!("Child script errored out: {}", status)
+    }
 
     return Ok(Response::with(status::Ok));
     Err(iron::error::IronError::new(MyError, status::BadRequest))
