@@ -9,32 +9,17 @@ use iron::*;
 use std::collections::LinkedList;
 use std::io::Read;
 use std::process::{Command, ExitStatus};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
-
-#[derive(Debug)]
-struct MyError;
-
-impl std::fmt::Display for MyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "")
-    }
-}
-
-impl std::error::Error for MyError {
-    fn description(&self) -> &str {
-        ""
-    }
-}
 
 #[derive(Debug)]
 struct BuildRequest {
     checkout_sha: String,
 }
 
-fn handle_mr(req: &mut Request, queue: &Mutex<LinkedList<BuildRequest>>)
+fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condvar))
              -> IronResult<Response> {
+    let &(ref list, ref cvar) = queue;
     let ref mut body = req.body;
     let mut s: String = String::new();
     body.read_to_string(&mut s).unwrap();
@@ -52,53 +37,55 @@ fn handle_mr(req: &mut Request, queue: &Mutex<LinkedList<BuildRequest>>)
     let incoming = BuildRequest {
         checkout_sha: arg.to_string(),
     };
-    let mut queue = queue.lock().unwrap();
+    let mut queue = list.lock().unwrap();
     queue.push_back(incoming);
     println!("Queued up...");
+    cvar.notify_one();
+    println!("Notified...");
 
     return Ok(Response::with(status::Ok));
-    Err(iron::error::IronError::new(MyError, status::BadRequest))
 }
 
-fn handle_build_request(queue: &Mutex<LinkedList<BuildRequest>>) -> Result<(), ()>
+fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar)) -> !
 {
-    println!("Sleeping...");
-    thread::sleep(Duration::new(10, 0));
+    loop {
+        let arg;
+        {
+            let &(ref list, ref cvar) = queue;
+            println!("Waiting to get the request...");
+            let mut list = list.lock().unwrap();
+            while list.is_empty() {
+                list = cvar.wait(list).unwrap();
+            }
+            let request = list.pop_front().unwrap();
+            println!("Got the request");
+            arg = request.checkout_sha;
+        }
 
-    println!("Waiting to get the request...");
-    let request = queue.lock().unwrap().pop_front().unwrap();
-    println!("Got the request");
-    let arg = request.checkout_sha;
+        let status = Command::new("git")
+            .arg("checkout").arg(arg)
+            .current_dir("workspace/shurik")
+            .status()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        if ! ExitStatus::success(&status) {
+            panic!("Couldn't checkout the workspace: {}", status)
+        }
+        println!("Launched the git");
 
-    let status = Command::new("git")
-        .arg("checkout").arg(arg)
-        .current_dir("workspace/shurik")
-        .status()
-        .unwrap_or_else(|e| {
-            panic!("failed to execute process: {}", e)
-        });
-    if ! ExitStatus::success(&status) {
-        panic!("Couldn't checkout the workspace: {}", status)
-    }
-    println!("Launched the git");
-
-    let mut child = Command::new("cargo")
-        .arg("build")
-        .current_dir("workspace/shurik")
-        .spawn()
-        .unwrap_or_else(|e| {
-            panic!("failed to execute process: {}", e)
-        });
-    let status = child.wait().unwrap();
-    if ! ExitStatus::success(&status) {
-        panic!("Couldn't build in the workspace: {}", status)
-    }
-    println!("Status: {}", status);
-
-    if ExitStatus::success(&status) {
-        Ok(())
-    } else {
-        Err(())
+        let mut child = Command::new("cargo")
+            .arg("build")
+            .current_dir("workspace/shurik")
+            .spawn()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        let status = child.wait().unwrap();
+        if ! ExitStatus::success(&status) {
+            panic!("Couldn't build in the workspace: {}", status)
+        }
+        println!("Status: {}", status);
     }
 }
 
@@ -122,11 +109,11 @@ fn main() {
     println!("GitLab port: {}", gitlab_port);
     println!("GitLab address: {}", gitlab_address);
 
-    let queue = Arc::new(Mutex::new(LinkedList::new()));
+    let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
     let queue2 = queue.clone();
 
     let builder = thread::spawn(move || {
-        handle_build_request(&*queue).unwrap();
+        handle_build_request(&*queue);
     });
 
     let mut router = router::Router::new();
