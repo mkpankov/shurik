@@ -48,7 +48,7 @@ fn handle_mr(req: &mut Request) -> IronResult<Response> {
             panic!("failed to execute process: {}", e)
         });
     if ! ExitStatus::success(&status) {
-        panic!("Child script errored out: {}", status)
+        panic!("Couldn't checkout the workspace: {}", status)
     }
 
     return Ok(Response::with(status::Ok));
