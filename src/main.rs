@@ -1,6 +1,7 @@
 extern crate clap;
 extern crate iron;
 extern crate router;
+extern crate serde_json;
 
 use clap::App;
 use iron::*;
@@ -29,6 +30,11 @@ fn handle_mr(req: &mut Request) -> IronResult<Response> {
 
     println!("{}", req.url);
     println!("{}", s);
+
+    let json: serde_json::value::Value = serde_json::from_str(&s).unwrap();
+    println!("data: {:?}", json);
+    // data: {"bar":"baz","foo":13}
+    println!("object? {}", json.is_object());
 
     return Ok(Response::with(status::Ok));
     Err(iron::error::IronError::new(MyError, status::BadRequest))
