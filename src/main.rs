@@ -6,8 +6,12 @@ extern crate serde_json;
 use clap::App;
 use iron::*;
 
-use std::process::{Command, ExitStatus};
+use std::collections::LinkedList;
 use std::io::Read;
+use std::process::{Command, ExitStatus};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 #[derive(Debug)]
 struct MyError;
@@ -24,7 +28,13 @@ impl std::error::Error for MyError {
     }
 }
 
-fn handle_mr(req: &mut Request) -> IronResult<Response> {
+#[derive(Debug)]
+struct BuildRequest {
+    checkout_sha: String,
+}
+
+fn handle_mr(req: &mut Request, queue: &Mutex<LinkedList<BuildRequest>>)
+             -> IronResult<Response> {
     let ref mut body = req.body;
     let mut s: String = String::new();
     body.read_to_string(&mut s).unwrap();
@@ -34,11 +44,31 @@ fn handle_mr(req: &mut Request) -> IronResult<Response> {
 
     let json: serde_json::value::Value = serde_json::from_str(&s).unwrap();
     println!("data: {:?}", json);
-    // data: {"bar":"baz","foo":13}
     println!("object? {}", json.is_object());
     let obj = json.as_object().unwrap();
     let checkout_sha = obj.get("checkout_sha").unwrap();
     let arg = checkout_sha.as_string().unwrap();
+
+    let incoming = BuildRequest {
+        checkout_sha: arg.to_string(),
+    };
+    let mut queue = queue.lock().unwrap();
+    queue.push_back(incoming);
+    println!("Queued up...");
+
+    return Ok(Response::with(status::Ok));
+    Err(iron::error::IronError::new(MyError, status::BadRequest))
+}
+
+fn handle_build_request(queue: &Mutex<LinkedList<BuildRequest>>) -> Result<(), ()>
+{
+    println!("Sleeping...");
+    thread::sleep(Duration::new(10, 0));
+
+    println!("Waiting to get the request...");
+    let request = queue.lock().unwrap().pop_front().unwrap();
+    println!("Got the request");
+    let arg = request.checkout_sha;
 
     let status = Command::new("git")
         .arg("checkout").arg(arg)
@@ -50,6 +80,7 @@ fn handle_mr(req: &mut Request) -> IronResult<Response> {
     if ! ExitStatus::success(&status) {
         panic!("Couldn't checkout the workspace: {}", status)
     }
+    println!("Launched the git");
 
     let mut child = Command::new("cargo")
         .arg("build")
@@ -64,8 +95,11 @@ fn handle_mr(req: &mut Request) -> IronResult<Response> {
     }
     println!("Status: {}", status);
 
-    return Ok(Response::with(status::Ok));
-    Err(iron::error::IronError::new(MyError, status::BadRequest))
+    if ExitStatus::success(&status) {
+        Ok(())
+    } else {
+        Err(())
+    }
 }
 
 fn main() {
@@ -88,11 +122,19 @@ fn main() {
     println!("GitLab port: {}", gitlab_port);
     println!("GitLab address: {}", gitlab_address);
 
+    let queue = Arc::new(Mutex::new(LinkedList::new()));
+    let queue2 = queue.clone();
+
+    let builder = thread::spawn(move || {
+        handle_build_request(&*queue).unwrap();
+    });
+
     let mut router = router::Router::new();
     router.post("/api/v1/mr",
                 move |req: &mut Request|
-                handle_mr(req));
+                handle_mr(req, &*queue2));
     Iron::new(router).http(
         (gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
+    builder.join().unwrap();
 }
