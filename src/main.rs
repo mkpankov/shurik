@@ -64,6 +64,18 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar)) -> !
         }
 
         let status = Command::new("git")
+            .arg("fetch")
+            .current_dir("workspace/shurik")
+            .status()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        if ! ExitStatus::success(&status) {
+            panic!("Couldn't fetch remote: {}", status)
+        }
+        println!("Fetched remote");
+
+        let status = Command::new("git")
             .arg("checkout").arg("try")
             .current_dir("workspace/shurik")
             .status()
@@ -88,7 +100,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar)) -> !
         println!("Reset 'try' to {}", arg);
 
         let status = Command::new("git")
-            .arg("push")
+            .arg("push").arg("--force-with-lease")
             .current_dir("workspace/shurik")
             .status()
             .unwrap_or_else(|e| {
@@ -97,7 +109,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar)) -> !
         if ! ExitStatus::success(&status) {
             panic!("Couldn't push the 'try' branch: {}", status)
         }
-        println!("Push 'try' to {}", arg);
+        println!("Push 'try'");
 
         {
             use hyper::Client;
