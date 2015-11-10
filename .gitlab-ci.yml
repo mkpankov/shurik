@@ -1,5 +1,5 @@
-#before_script:
-#  - ci/run.sh
+before_script:
+  - ci/run.sh
   
 stages:
   - build
@@ -20,6 +20,3 @@ cargo_test:
     - cargo test
   only:
     - master
-
-variables:
-  PATH: ""
