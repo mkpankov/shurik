@@ -14,15 +14,10 @@ RUST_INSTALL_DIR="$WORKSPACE/install/rust"
 "$SCRIPT_DIR/rustup.sh" --prefix="$RUST_INSTALL_DIR" --disable-sudo --yes
 
 PATH="$RUST_INSTALL_DIR/bin:$PATH"
-
-export PATH
-
 LD_LIBRARY_PATH="$RUST_INSTALL_DIR/lib:${LD_LIBRARY_PATH:-}"
 
-export LD_LIBRARY_PATH
+echo 'PATH="$PATH"' > environment
+echo 'LD_LIBRARY_PATH="$LD_LIBRARY_PATH"' >> environment
 
 rustc --version
 cargo --version
-
-cargo build
-cargo test

@@ -1,0 +1,25 @@
+before_script:
+  - ci/run.sh
+  
+stages:
+  - build
+  - test
+
+cargo_build:
+  stage: build
+  script:
+    - . environment
+    - cargo build
+  only:
+    - master
+
+cargo_test:
+  stage: test
+  script:
+    - . environment
+    - cargo test
+  only:
+    - master
+
+variables:
+  PATH: ""
