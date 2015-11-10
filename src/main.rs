@@ -1,4 +1,5 @@
 extern crate clap;
+extern crate hyper;
 extern crate iron;
 extern crate router;
 extern crate serde_json;
@@ -63,29 +64,52 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar)) -> !
         }
 
         let status = Command::new("git")
-            .arg("checkout").arg(arg)
+            .arg("checkout").arg("try")
             .current_dir("workspace/shurik")
             .status()
             .unwrap_or_else(|e| {
                 panic!("failed to execute process: {}", e)
             });
         if ! ExitStatus::success(&status) {
-            panic!("Couldn't checkout the workspace: {}", status)
+            panic!("Couldn't checkout the 'try' branch: {}", status)
         }
-        println!("Launched the git");
+        println!("Checked out 'try'");
 
-        let mut child = Command::new("cargo")
-            .arg("build")
+        let status = Command::new("git")
+            .arg("reset").arg("--hard").arg(&arg)
             .current_dir("workspace/shurik")
-            .spawn()
+            .status()
             .unwrap_or_else(|e| {
                 panic!("failed to execute process: {}", e)
             });
-        let status = child.wait().unwrap();
         if ! ExitStatus::success(&status) {
-            panic!("Couldn't build in the workspace: {}", status)
+            panic!("Couldn't reset the 'try' branch: {}", status)
         }
-        println!("Status: {}", status);
+        println!("Reset 'try' to {}", arg);
+
+        let status = Command::new("git")
+            .arg("push")
+            .current_dir("workspace/shurik")
+            .status()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        if ! ExitStatus::success(&status) {
+            panic!("Couldn't push the 'try' branch: {}", status)
+        }
+        println!("Push 'try' to {}", arg);
+
+        {
+            use hyper::Client;
+
+            let client = Client::new();
+
+            let res = client.post("https://hudson.host/jenkins/job/ci_test/build")
+                .body("token=BUILD_ME_PLEASE&cause=I+want+to+be+built")
+                .send()
+                .unwrap();
+            assert_eq!(res.status, hyper::Ok);
+        }
     }
 }
 
