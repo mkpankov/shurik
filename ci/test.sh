@@ -6,4 +6,4 @@ set -x
 
 . ./environment
 
-cargo build
+cargo test
