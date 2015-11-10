@@ -4,6 +4,6 @@ set -e
 set -u
 set -x
 
-. environment
+. ./environment
 
 cargo build
