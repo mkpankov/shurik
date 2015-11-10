@@ -18,6 +18,8 @@ LD_LIBRARY_PATH="$RUST_INSTALL_DIR/lib:${LD_LIBRARY_PATH:-}"
 
 echo 'PATH='"$PATH" > environment
 echo 'LD_LIBRARY_PATH='"$LD_LIBRARY_PATH" >> environment
+echo 'export PATH' >> environment
+echo 'export LD_LIBRARY_PATH' >> environment
 
 . ./environment
 
