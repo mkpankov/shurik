@@ -1,5 +1,5 @@
 before_script:
-  - ci/run.sh
+  - ci/before_script.sh
   
 stages:
   - build
