@@ -16,8 +16,8 @@ RUST_INSTALL_DIR="$WORKSPACE/install/rust"
 PATH="$RUST_INSTALL_DIR/bin:$PATH"
 LD_LIBRARY_PATH="$RUST_INSTALL_DIR/lib:${LD_LIBRARY_PATH:-}"
 
-echo 'PATH="$PATH"' > environment
-echo 'LD_LIBRARY_PATH="$LD_LIBRARY_PATH"' >> environment
+echo 'PATH='"$PATH" > environment
+echo 'LD_LIBRARY_PATH='"$LD_LIBRARY_PATH" >> environment
 
 . ./environment
 
