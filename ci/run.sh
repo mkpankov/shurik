@@ -19,8 +19,5 @@ LD_LIBRARY_PATH="$RUST_INSTALL_DIR/lib:${LD_LIBRARY_PATH:-}"
 echo 'PATH="$PATH"' > environment
 echo 'LD_LIBRARY_PATH="$LD_LIBRARY_PATH"' >> environment
 
-echo 'http_proxy=http://127.0.0.1:3128/' >> environment
-echo 'https_proxy=http://127.0.0.1:3128/' >> environment
-
 rustc --version
 cargo --version
