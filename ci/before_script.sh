@@ -11,7 +11,7 @@ SCRIPT_DIR=$(dirname "$SCRIPT")
 echo "$SCRIPT_DIR"
 
 RUST_INSTALL_DIR="$WORKSPACE/install/rust"
-"$SCRIPT_DIR/rustup.sh" --prefix="$RUST_INSTALL_DIR" --disable-sudo --yes
+"$SCRIPT_DIR/rustup.sh" --prefix="$RUST_INSTALL_DIR" --disable-sudo --save --yes
 
 PATH="$RUST_INSTALL_DIR/bin:$PATH"
 LD_LIBRARY_PATH="$RUST_INSTALL_DIR/lib:${LD_LIBRARY_PATH:-}"
