@@ -17,6 +17,7 @@ use std::process::{Command, ExitStatus};
 use regex::Regex;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::Duration;
 
 #[derive(Debug)]
 struct BuildRequest {
@@ -122,7 +123,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
         let jenkins_job_url = config.get("jenkins-job-url").unwrap().as_str().unwrap();
         println!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
 
-        let mut child = Command::new("wget")
+        let child = Command::new("wget")
             .arg("-S").arg("-O-")
             .arg("--no-check-certificate").arg("--auth-no-challenge")
             .arg(format!("--http-user={}", http_user))
@@ -148,7 +149,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
 
         println!("Parsed the location");
 
-        let mut child = Command::new("wget")
+        let child = Command::new("wget")
             .arg("-S").arg("-O-")
             .arg("--no-check-certificate").arg("--auth-no-challenge")
             .arg(format!("--http-user={}", http_user))
@@ -164,8 +165,11 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
         let stdout = output.stdout;
         let stdout = std::str::from_utf8(&stdout).unwrap();
         if ! ExitStatus::success(&status) {
-            panic!("Couldn't notify the Jenkins: {}", status)
+            panic!("Couldn't get queue item from Jenkins: {}", status)
         }
+
+        println!("Got queue item");
+
         let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
         println!("data: {:?}", json);
         println!("object? {}", json.is_object());
@@ -174,6 +178,45 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
         let url = executable.get("url").unwrap();
         let arg = url.as_string().unwrap();
 
+        println!("Parsed the final url");
+
+        loop {
+            let child = Command::new("wget")
+                .arg("-S").arg("-O-")
+                .arg("--no-check-certificate").arg("--auth-no-challenge")
+                .arg(format!("--http-user={}", http_user))
+                .arg(format!("--http-password={}", http_password))
+                .arg(format!("{}/api/json?pretty=true", arg))
+                .current_dir("workspace/shurik")
+                .spawn()
+                .unwrap_or_else(|e| {
+                    panic!("failed to execute process: {}", e)
+                });
+            let output = child.wait_with_output().unwrap();
+            let status = output.status;
+            let stdout = output.stdout;
+            let stdout = std::str::from_utf8(&stdout).unwrap();
+            if ! ExitStatus::success(&status) {
+                panic!("Couldn't notify the Jenkins: {}", status)
+            }
+
+            println!("Polled");
+
+            let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
+            println!("data: {:?}", json);
+            println!("object? {}", json.is_object());
+            let obj = json.as_object().unwrap();
+            let result = obj.get("result").unwrap().as_string().unwrap();
+            println!("Parsed response, result == {}", result);
+
+            if result != "nil" {
+                break;
+            }
+
+            print!("Sleeping...");
+            std::thread::sleep(Duration::new(5, 0));
+            println!("ok");
+        }
     }
 }
 
