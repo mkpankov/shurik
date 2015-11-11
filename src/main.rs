@@ -1,6 +1,7 @@
 extern crate clap;
 extern crate hyper;
 extern crate iron;
+extern crate regex;
 extern crate router;
 extern crate serde_json;
 extern crate toml;
@@ -13,6 +14,7 @@ use std::collections::LinkedList;
 use std::fs::File;
 use std::io::Read;
 use std::process::{Command, ExitStatus};
+use regex::Regex;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
@@ -120,20 +122,29 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
         let jenkins_job_url = config.get("jenkins-job-url").unwrap().as_str().unwrap();
         println!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
 
-        let status = Command::new("wget")
+        let mut child = Command::new("wget")
+            .arg("-S").arg("-O-")
             .arg("--no-check-certificate").arg("--auth-no-challenge")
             .arg(format!("--http-user={}", http_user))
             .arg(format!("--http-password={}", http_password))
             .arg(format!("{}/?token={}&cause=I+want+to+be+built", jenkins_job_url, token))
             .current_dir("workspace/shurik")
-            .status()
+            .spawn()
             .unwrap_or_else(|e| {
                 panic!("failed to execute process: {}", e)
             });
+        let output = child.wait_with_output().unwrap();
+        let status = output.status;
+        let stderr = output.stderr;
+        let stderr = std::str::from_utf8(&stderr).unwrap();
         if ! ExitStatus::success(&status) {
             panic!("Couldn't notify the Jenkins: {}", status)
         }
-        println!("Push 'try'");
+
+        println!("Notified the Jenkins");
+
+        let re = Regex::new(r"Location: ([^\n]*)").unwrap();
+        let location = re.captures(stderr).unwrap().at(1).unwrap();
     }
 }
 
