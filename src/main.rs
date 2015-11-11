@@ -145,6 +145,35 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
 
         let re = Regex::new(r"Location: ([^\n]*)").unwrap();
         let location = re.captures(stderr).unwrap().at(1).unwrap();
+
+        println!("Parsed the location");
+
+        let mut child = Command::new("wget")
+            .arg("-S").arg("-O-")
+            .arg("--no-check-certificate").arg("--auth-no-challenge")
+            .arg(format!("--http-user={}", http_user))
+            .arg(format!("--http-password={}", http_password))
+            .arg(format!("{}", location))
+            .current_dir("workspace/shurik")
+            .spawn()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        let output = child.wait_with_output().unwrap();
+        let status = output.status;
+        let stdout = output.stdout;
+        let stdout = std::str::from_utf8(&stdout).unwrap();
+        if ! ExitStatus::success(&status) {
+            panic!("Couldn't notify the Jenkins: {}", status)
+        }
+        let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
+        println!("data: {:?}", json);
+        println!("object? {}", json.is_object());
+        let obj = json.as_object().unwrap();
+        let executable = obj.get("executable").unwrap().as_object().unwrap();
+        let url = executable.get("url").unwrap();
+        let arg = url.as_string().unwrap();
+
     }
 }
 
