@@ -25,8 +25,8 @@ use std::time::Duration;
 #[derive(Debug)]
 struct BuildRequest {
     checkout_sha: String,
-    source_project_id: String,
-    mr_id: String
+    source_project_id: u64,
+    mr_id: u64,
 }
 
 fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condvar))
@@ -43,13 +43,15 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
     println!("data: {:?}", json);
     println!("object? {}", json.is_object());
     let obj = json.as_object().unwrap();
-    let checkout_sha = obj.get("checkout_sha").unwrap().as_string().unwrap();
-    let source_project_id = obj.get("source_project_id").unwrap().as_string().unwrap();
-    let mr_id = obj.get("id").unwrap().as_string().unwrap();
+    let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
+    let last_commit = attrs.get("last_commit").unwrap().as_object().unwrap();
+    let checkout_sha = last_commit.get("id").unwrap().as_string().unwrap();
+    let source_project_id = attrs.get("source_project_id").unwrap().as_u64().unwrap();
+    let mr_id = attrs.get("id").unwrap().as_u64().unwrap();
 
     let incoming = BuildRequest {
         checkout_sha: checkout_sha.to_owned(),
-        source_project_id: source_project_id.to_owned(),
+        source_project_id: source_project_id,
         mr_id: mr_id.to_owned(),
     };
     let mut queue = list.lock().unwrap();
@@ -251,12 +253,19 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
 
                     let mut headers = Headers::new();
                     headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
+                    headers.set_raw("PRIVATE-TOKEN", vec![private_token.to_owned().into_bytes()]);
+
+                    println!("headers == {:?}", headers);
+
+                    let message = &*format!("{{ \"note\": \"build status: {}, url: {}\"}}", result, arg);
+
                     let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", gitlab_api_root, source_project_id, mr_id))
                         .headers(headers)
-                        .body(&*format!("login={}&password={}", gitlab_user, gitlab_password))
+                        .body(message)
                         .send()
                         .unwrap();
                     assert_eq!(res.status, hyper::status::StatusCode::Created);
+                    break;
                 }
             }
 
