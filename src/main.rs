@@ -7,6 +7,7 @@ extern crate serde_json;
 extern crate toml;
 
 use clap::App;
+use hyper::Client;
 use iron::*;
 use toml::Table;
 
@@ -55,6 +56,26 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
 
 fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), config: Table) -> !
 {
+    let gitlab_user = config.get("user").unwrap().as_str().unwrap();
+    let gitlab_password = config.get("password").unwrap().as_str().unwrap();
+    let gitlab_api_root = config.get("url").unwrap().as_str().unwrap();
+
+    let client = Client::new();
+
+    let mut res = client.post(&*format!("{}/session", gitlab_api_root))
+        .body(&*format!("login={}&password={}", gitlab_user, gitlab_password))
+        .send()
+        .unwrap();
+    assert_eq!(res.status, hyper::status::StatusCode::Created);
+    let mut text = String::new();
+    res.read_to_string(&mut text).unwrap();
+    let json: serde_json::value::Value = serde_json::from_str(&text).unwrap();
+    println!("data: {:?}", json);
+    println!("object? {}", json.is_object());
+    let obj = json.as_object().unwrap();
+    let private_token = obj.get("private_token").unwrap().as_string().unwrap();
+    println!("Logged in to GitLab, token == {}", private_token);
+
     loop {
         let arg;
         {
