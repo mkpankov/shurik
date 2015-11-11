@@ -392,6 +392,27 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             }
             println!("Push 'master'");
         }
+
+        {
+            println!("{}", result_string);
+            if result_string == "success" {
+                ;
+            }
+            let &(ref list, _) = queue;
+            let mut list = list.lock().unwrap();
+            for i in list.iter_mut() {
+                if i.source_project_id == source_project_id
+                    && i.mr_id == mr_id
+                {
+                    println!("Found");
+                    assert_eq!(i.status, Status::WaitingForMerge);
+                    i.status = Status::Merged;
+                    println!("Updated");
+                    break;
+                }
+            }
+        }
+
     }
 }
 
