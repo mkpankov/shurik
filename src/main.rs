@@ -22,16 +22,25 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
+#[derive(Debug, PartialEq, Eq)]
+enum Status {
+    WaitingForReview,
+    WaitingForCi,
+    WaitingForMerge,
+    Merged,
+}
+
 #[derive(Debug)]
 struct BuildRequest {
     checkout_sha: String,
     source_project_id: u64,
     mr_id: u64,
+    status: Status,
 }
 
 fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condvar))
              -> IronResult<Response> {
-    let &(ref list, ref cvar) = queue;
+    let &(ref list, _) = queue;
     let ref mut body = req.body;
     let mut s: String = String::new();
     body.read_to_string(&mut s).unwrap();
@@ -53,15 +62,58 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
         checkout_sha: checkout_sha.to_owned(),
         source_project_id: source_project_id,
         mr_id: mr_id.to_owned(),
+        status: Status::WaitingForReview,
     };
     let mut queue = list.lock().unwrap();
     queue.push_back(incoming);
     println!("Queued up...");
+
+    return Ok(Response::with(status::Ok));
+}
+
+fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condvar))
+                  -> IronResult<Response> {
+    let &(ref list, ref cvar) = queue;
+    let ref mut body = req.body;
+    let mut s: String = String::new();
+    body.read_to_string(&mut s).unwrap();
+
+    println!("{}", req.url);
+    println!("{}", s);
+
+    let json: serde_json::value::Value = serde_json::from_str(&s).unwrap();
+    println!("data: {:?}", json);
+    println!("object? {}", json.is_object());
+    let obj = json.as_object().unwrap();
+    let user = obj.get("user").unwrap().as_object().unwrap();
+    let username = user.get("username").unwrap().as_string().unwrap();
+
+    if username == "pankov" {
+        let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
+        let note = attrs.get("note").unwrap().as_string().unwrap();
+        let project_id = attrs.get("project_id").unwrap().as_u64().unwrap();
+        let mr_id = attrs.get("noteable_id").unwrap().as_u64().unwrap();
+        if note == "@shurik r+" {
+            let mut list = list.lock().unwrap();
+            for i in list.iter_mut() {
+                if i.source_project_id == project_id
+                    && i.mr_id == mr_id
+                {
+                    println!("Found");
+                    i.status = Status::WaitingForCi;
+                    println!("Updated");
+                    break;
+                }
+            }
+        }
+    }
+
     cvar.notify_one();
     println!("Notified...");
 
     return Ok(Response::with(status::Ok));
 }
+
 
 fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), config: Table) -> !
 {
@@ -102,6 +154,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             arg = request.checkout_sha;
             source_project_id = request.source_project_id;
             mr_id = request.mr_id;
+            println!("{:?}", request.status);
+            assert_eq!(request.status, Status::WaitingForCi);
         }
 
         let status = Command::new("git")
@@ -221,6 +275,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             println!("ok");
         }
 
+        let mut result_string = String::new();
         loop {
             let output = Command::new("wget")
                 .arg("-S").arg("-O-")
@@ -248,8 +303,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             let obj = json.as_object().unwrap();
             if let Some(result) = obj.get("result") {
                 if ! result.is_null() {
-                    let result = result.as_string().unwrap();
-                    println!("Parsed response, result == {}", result);
+                    result_string = result.as_string().unwrap().to_owned();
+                    println!("Parsed response, result_string == {}", result_string);
 
                     let mut headers = Headers::new();
                     headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
@@ -257,7 +312,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
 
                     println!("headers == {:?}", headers);
 
-                    let message = &*format!("{{ \"note\": \"build status: {}, url: {}\"}}", result, arg);
+                    let message = &*format!("{{ \"note\": \"build status: {}, url: {}\"}}", result_string, arg);
 
                     let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", gitlab_api_root, source_project_id, mr_id))
                         .headers(headers)
@@ -272,6 +327,26 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             print!("Sleeping...");
             std::thread::sleep(Duration::new(5, 0));
             println!("ok");
+        }
+
+        {
+            println!("{}", result_string);
+            if result_string == "success" {
+                ;
+            }
+            let &(ref list, _) = queue;
+            let mut list = list.lock().unwrap();
+            for i in list.iter_mut() {
+                if i.source_project_id == source_project_id
+                    && i.mr_id == mr_id
+                {
+                    println!("Found");
+                    assert_eq!(i.status, Status::WaitingForCi);
+                    i.status = Status::WaitingForMerge;
+                    println!("Updated");
+                    break;
+                }
+            }
         }
     }
 }
@@ -305,6 +380,7 @@ fn main() {
 
     let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
     let queue2 = queue.clone();
+    let queue3 = queue.clone();
 
     let builder = thread::spawn(move || {
         handle_build_request(&*queue, config);
@@ -314,6 +390,9 @@ fn main() {
     router.post("/api/v1/mr",
                 move |req: &mut Request|
                 handle_mr(req, &*queue2));
+    router.post("/api/v1/comment",
+                move |req: &mut Request|
+                handle_comment(req, &*queue3));
     Iron::new(router).http(
         (gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
