@@ -123,21 +123,20 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
         let jenkins_job_url = config.get("jenkins-job-url").unwrap().as_str().unwrap();
         println!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
 
-        let child = Command::new("wget")
+        let output = Command::new("wget")
             .arg("-S").arg("-O-")
             .arg("--no-check-certificate").arg("--auth-no-challenge")
             .arg(format!("--http-user={}", http_user))
             .arg(format!("--http-password={}", http_password))
             .arg(format!("{}/?token={}&cause=I+want+to+be+built", jenkins_job_url, token))
             .current_dir("workspace/shurik")
-            .spawn()
+            .output()
             .unwrap_or_else(|e| {
                 panic!("failed to execute process: {}", e)
             });
-        let output = child.wait_with_output().unwrap();
         let status = output.status;
         let stderr = output.stderr;
-        let stderr = std::str::from_utf8(&stderr).unwrap();
+        let stderr = String::from_utf8_lossy(&stderr);
         if ! ExitStatus::success(&status) {
             panic!("Couldn't notify the Jenkins: {}", status)
         }
@@ -145,54 +144,60 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
         println!("Notified the Jenkins");
 
         let re = Regex::new(r"Location: ([^\n]*)").unwrap();
-        let location = re.captures(stderr).unwrap().at(1).unwrap();
+        let location = re.captures(&stderr).unwrap().at(1).unwrap();
 
-        println!("Parsed the location");
+        println!("Parsed the location == {}", location);
 
-        let child = Command::new("wget")
-            .arg("-S").arg("-O-")
-            .arg("--no-check-certificate").arg("--auth-no-challenge")
-            .arg(format!("--http-user={}", http_user))
-            .arg(format!("--http-password={}", http_password))
-            .arg(format!("{}", location))
-            .current_dir("workspace/shurik")
-            .spawn()
-            .unwrap_or_else(|e| {
-                panic!("failed to execute process: {}", e)
-            });
-        let output = child.wait_with_output().unwrap();
-        let status = output.status;
-        let stdout = output.stdout;
-        let stdout = std::str::from_utf8(&stdout).unwrap();
-        if ! ExitStatus::success(&status) {
-            panic!("Couldn't get queue item from Jenkins: {}", status)
+        let arg;
+        loop {
+            let output = Command::new("wget")
+                .arg("-S").arg("-O-")
+                .arg("--no-check-certificate").arg("--auth-no-challenge")
+                .arg(format!("--http-user={}", http_user))
+                .arg(format!("--http-password={}", http_password))
+                .arg(format!("{}/api/json?pretty=true", location))
+                .current_dir("workspace/shurik")
+                .output()
+                .unwrap_or_else(|e| {
+                    panic!("failed to execute process: {}", e)
+                });
+            let status = output.status;
+            let stdout = output.stdout;
+            let stdout = std::str::from_utf8(&stdout).unwrap();
+            if ! ExitStatus::success(&status) {
+                panic!("Couldn't get queue item from Jenkins: {}", status)
+            }
+
+            println!("Got queue item");
+
+            let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
+            println!("data: {:?}", json);
+            println!("object? {}", json.is_object());
+            let obj = json.as_object().unwrap();
+            if let Some(executable) = obj.get("executable") {
+                let url = executable.as_object().unwrap().get("url").unwrap();
+                arg = url.as_string().unwrap().to_string();
+                println!("Parsed the final url");
+                break;
+            }
+
+            print!("Sleeping...");
+            std::thread::sleep(Duration::new(5, 0));
+            println!("ok");
         }
 
-        println!("Got queue item");
-
-        let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
-        println!("data: {:?}", json);
-        println!("object? {}", json.is_object());
-        let obj = json.as_object().unwrap();
-        let executable = obj.get("executable").unwrap().as_object().unwrap();
-        let url = executable.get("url").unwrap();
-        let arg = url.as_string().unwrap();
-
-        println!("Parsed the final url");
-
         loop {
-            let child = Command::new("wget")
+            let output = Command::new("wget")
                 .arg("-S").arg("-O-")
                 .arg("--no-check-certificate").arg("--auth-no-challenge")
                 .arg(format!("--http-user={}", http_user))
                 .arg(format!("--http-password={}", http_password))
                 .arg(format!("{}/api/json?pretty=true", arg))
                 .current_dir("workspace/shurik")
-                .spawn()
+                .output()
                 .unwrap_or_else(|e| {
                     panic!("failed to execute process: {}", e)
                 });
-            let output = child.wait_with_output().unwrap();
             let status = output.status;
             let stdout = output.stdout;
             let stdout = std::str::from_utf8(&stdout).unwrap();
@@ -206,11 +211,12 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             println!("data: {:?}", json);
             println!("object? {}", json.is_object());
             let obj = json.as_object().unwrap();
-            let result = obj.get("result").unwrap().as_string().unwrap();
-            println!("Parsed response, result == {}", result);
-
-            if result != "nil" {
-                break;
+            if let Some(result) = obj.get("result") {
+                if ! result.is_null() {
+                    let result = result.as_string().unwrap();
+                    println!("Parsed response, result == {}", result);
+                    break;
+                }
             }
 
             print!("Sleeping...");
