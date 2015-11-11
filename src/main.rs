@@ -36,6 +36,7 @@ struct BuildRequest {
     source_project_id: u64,
     mr_id: u64,
     status: Status,
+    mr_human_number: u64,
 }
 
 fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condvar))
@@ -56,6 +57,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
     let last_commit = attrs.get("last_commit").unwrap().as_object().unwrap();
     let checkout_sha = last_commit.get("id").unwrap().as_string().unwrap();
     let source_project_id = attrs.get("source_project_id").unwrap().as_u64().unwrap();
+    let mr_human_number = attrs.get("iid").unwrap().as_u64().unwrap();
     let mr_id = attrs.get("id").unwrap().as_u64().unwrap();
 
     let incoming = BuildRequest {
@@ -63,6 +65,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
         source_project_id: source_project_id,
         mr_id: mr_id.to_owned(),
         status: Status::WaitingForReview,
+        mr_human_number: mr_human_number,
     };
     let mut queue = list.lock().unwrap();
     queue.push_back(incoming);
@@ -141,6 +144,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
         let arg;
         let source_project_id;
         let mr_id;
+        let mr_human_number;
 
         {
             let &(ref list, ref cvar) = queue;
@@ -154,6 +158,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             arg = request.checkout_sha;
             source_project_id = request.source_project_id;
             mr_id = request.mr_id;
+            mr_human_number = request.mr_human_number;
             println!("{:?}", request.status);
             assert_eq!(request.status, Status::WaitingForCi);
         }
@@ -347,6 +352,45 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
                     break;
                 }
             }
+        }
+
+        {
+            let status = Command::new("git")
+                .arg("checkout").arg("master")
+                .current_dir("workspace/shurik")
+                .status()
+                .unwrap_or_else(|e| {
+                    panic!("failed to execute process: {}", e)
+                });
+            if ! ExitStatus::success(&status) {
+                panic!("Couldn't checkout the 'master' branch: {}", status)
+            }
+            println!("Checked out 'master'");
+
+            let status = Command::new("git")
+                .arg("merge").arg("try").arg("--ff-only")
+                .arg(&*format!("-m \"Merging MR #{}\"", mr_human_number))
+                .current_dir("workspace/shurik")
+                .status()
+                .unwrap_or_else(|e| {
+                    panic!("failed to execute process: {}", e)
+                });
+            if ! ExitStatus::success(&status) {
+                panic!("Couldn't merge the 'master' branch: {}", status)
+            }
+            println!("Merge master to MR {}", mr_human_number);
+
+            let status = Command::new("git")
+                .arg("push")
+                .current_dir("workspace/shurik")
+                .status()
+                .unwrap_or_else(|e| {
+                    panic!("failed to execute process: {}", e)
+                });
+            if ! ExitStatus::success(&status) {
+                panic!("Couldn't push the 'master' branch: {}", status)
+            }
+            println!("Push 'master'");
         }
     }
 }
