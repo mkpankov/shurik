@@ -8,6 +8,8 @@ extern crate toml;
 
 use clap::App;
 use hyper::Client;
+use hyper::header::{ContentType};
+use hyper::mime::{Mime, TopLevel, SubLevel};
 use iron::*;
 use toml::Table;
 
@@ -23,6 +25,8 @@ use std::time::Duration;
 #[derive(Debug)]
 struct BuildRequest {
     checkout_sha: String,
+    source_project_id: String,
+    mr_id: String
 }
 
 fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condvar))
@@ -39,11 +43,14 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
     println!("data: {:?}", json);
     println!("object? {}", json.is_object());
     let obj = json.as_object().unwrap();
-    let checkout_sha = obj.get("checkout_sha").unwrap();
-    let arg = checkout_sha.as_string().unwrap();
+    let checkout_sha = obj.get("checkout_sha").unwrap().as_string().unwrap();
+    let source_project_id = obj.get("source_project_id").unwrap().as_string().unwrap();
+    let mr_id = obj.get("id").unwrap().as_string().unwrap();
 
     let incoming = BuildRequest {
-        checkout_sha: arg.to_string(),
+        checkout_sha: checkout_sha.to_owned(),
+        source_project_id: source_project_id.to_owned(),
+        mr_id: mr_id.to_owned(),
     };
     let mut queue = list.lock().unwrap();
     queue.push_back(incoming);
@@ -78,6 +85,9 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
 
     loop {
         let arg;
+        let source_project_id;
+        let mr_id;
+
         {
             let &(ref list, ref cvar) = queue;
             println!("Waiting to get the request...");
@@ -88,6 +98,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             let request = list.pop_front().unwrap();
             println!("Got the request");
             arg = request.checkout_sha;
+            source_project_id = request.source_project_id;
+            mr_id = request.mr_id;
         }
 
         let status = Command::new("git")
@@ -236,7 +248,15 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
                 if ! result.is_null() {
                     let result = result.as_string().unwrap();
                     println!("Parsed response, result == {}", result);
-                    break;
+
+                    let mut headers = Headers::new();
+                    headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
+                    let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", gitlab_api_root, source_project_id, mr_id))
+                        .headers(headers)
+                        .body(&*format!("login={}&password={}", gitlab_user, gitlab_password))
+                        .send()
+                        .unwrap();
+                    assert_eq!(res.status, hyper::status::StatusCode::Created);
                 }
             }
 
