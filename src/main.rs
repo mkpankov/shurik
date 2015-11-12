@@ -149,18 +149,30 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
         let note = attrs.get("note").unwrap().as_string().unwrap();
         let project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
         let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
-        if note == "@shurik r+" {
-            if let Some(mut existing_mr) =
-                find_mr_mut(
-                    &mut *list.lock().unwrap(),
-                    MrUid { target_project_id: project_id, mr_id: mr_id })
-            {
-                if existing_mr.status == Status::Open(SubStatusOpen::WaitingForReview) {
-                    existing_mr.status = Status::Open(SubStatusOpen::WaitingForCi);
-                    println!("Updated existing MR");
+        let mention = "@shurik ";
+        let mention_len = mention.len();
+        if &note[0..mention_len] == mention {
+            match &note[mention_len..] {
+                "r+" => {
+                    if let Some(mut existing_mr) =
+                        find_mr_mut(
+                            &mut *list.lock().unwrap(),
+                            MrUid { target_project_id: project_id, mr_id: mr_id })
+                    {
+                        if existing_mr.status == Status::Open(SubStatusOpen::WaitingForReview) {
+                            existing_mr.status = Status::Open(SubStatusOpen::WaitingForCi);
+                            println!("Updated existing MR");
+                            cvar.notify_one();
+                            println!("Notified...");
+                        }
+                    }
+                },
+                "try" => {
+                    println!("Only trying, not updating status");
                     cvar.notify_one();
                     println!("Notified...");
                 }
+                _ => {}
             }
         }
     }
@@ -210,7 +222,6 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             mr_id = request.mr_id;
             mr_human_number = request.mr_human_number;
             println!("{:?}", request.status);
-            assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
         }
 
         let status = Command::new("git")
