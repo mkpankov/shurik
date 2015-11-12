@@ -14,7 +14,6 @@ use toml::Table;
 use std::collections::LinkedList;
 use std::fs::File;
 use std::io::Read;
-use std::process::{Command, ExitStatus};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
