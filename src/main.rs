@@ -174,7 +174,6 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
             existing_mr.approval_status = ApprovalStatus::Pending;
             existing_mr.checkout_sha = last_commit_id.to_string();
             println!("Updated existing MR");
-            return Ok(Response::with(status::Ok));
         }
         let incoming = MergeRequest {
             checkout_sha: last_commit_id.to_owned(),
