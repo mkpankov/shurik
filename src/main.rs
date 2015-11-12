@@ -32,7 +32,7 @@ enum Status {
 }
 
 #[derive(Debug)]
-struct BuildRequest {
+struct MergeRequest {
     checkout_sha: String,
     target_project_id: u64,
     mr_id: u64,
@@ -47,7 +47,7 @@ struct MrUid {
 }
 
 #[allow(unused)]
-fn find_mr(list: &LinkedList<BuildRequest>, id: MrUid) -> Option<&BuildRequest> {
+fn find_mr(list: &LinkedList<MergeRequest>, id: MrUid) -> Option<&MergeRequest> {
     for i in list.iter() {
         if i.target_project_id == id.target_project_id
             && i.mr_id == id.mr_id
@@ -59,7 +59,7 @@ fn find_mr(list: &LinkedList<BuildRequest>, id: MrUid) -> Option<&BuildRequest> 
     None
 }
 
-fn find_mr_mut(list: &mut LinkedList<BuildRequest>, id: MrUid) -> Option<&mut BuildRequest> {
+fn find_mr_mut(list: &mut LinkedList<MergeRequest>, id: MrUid) -> Option<&mut MergeRequest> {
     for i in list.iter_mut() {
         if i.target_project_id == id.target_project_id
             && i.mr_id == id.mr_id
@@ -71,7 +71,7 @@ fn find_mr_mut(list: &mut LinkedList<BuildRequest>, id: MrUid) -> Option<&mut Bu
     None
 }
 
-fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condvar))
+fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar))
              -> IronResult<Response> {
     let &(ref list, _) = queue;
     let ref mut body = req.body;
@@ -111,7 +111,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
             println!("Updated existing MR");
             return Ok(Response::with(status::Ok));
         }
-        let incoming = BuildRequest {
+        let incoming = MergeRequest {
             checkout_sha: checkout_sha.to_owned(),
             target_project_id: target_project_id,
             mr_id: mr_id.to_owned(),
@@ -125,7 +125,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
     return Ok(Response::with(status::Ok));
 }
 
-fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condvar))
+fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar))
                   -> IronResult<Response> {
     let &(ref list, ref cvar) = queue;
     let ref mut body = req.body;
@@ -420,7 +420,7 @@ mod jenkins {
     }
 }
 
-fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), config: Table) -> !
+fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), config: Table) -> !
 {
     let gitlab_user = config.get("user").unwrap().as_str().unwrap();
     let gitlab_password = config.get("password").unwrap().as_str().unwrap();
@@ -455,9 +455,9 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             while list.is_empty() {
                 list = cvar.wait(list).unwrap();
             }
-            let request = list.pop_front().unwrap();
+            let request = list.front().unwrap();
             println!("Got the request");
-            arg = request.checkout_sha;
+            arg = request.checkout_sha.clone();
             target_project_id = request.target_project_id;
             mr_id = request.mr_id;
             mr_human_number = request.mr_human_number;
