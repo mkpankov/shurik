@@ -262,10 +262,16 @@ mod git {
     }
 
     pub fn push(do_force: bool) {
-        let force = if do_force {"--force-with-lease"} else {""};
-        let status = Command::new("git")
-            .arg("push").arg(force)
-            .current_dir("workspace/shurik")
+        let mut command = Command::new("git");
+        let builder = command
+            .arg("push")
+            .current_dir("workspace/shurik");
+
+        if do_force {
+            builder.arg("--force_with_lease");
+        }
+
+        let status = builder
             .status()
             .unwrap_or_else(|e| {
                 panic!("failed to execute process: {}", e)
