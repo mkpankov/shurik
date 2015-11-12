@@ -207,18 +207,18 @@ mod git {
         }
     }
 
-    pub fn checkout() {
+    pub fn checkout(branch: &str) {
         let status = Command::new("git")
-            .arg("checkout").arg("try")
+            .arg("checkout").arg(branch)
             .current_dir("workspace/shurik")
             .status()
             .unwrap_or_else(|e| {
                 panic!("failed to execute process: {}", e)
             });
         if ExitStatus::success(&status) {
-            println!("Checked out 'try'");
+            println!("Checked out {}", branch);
         } else {
-            panic!("Couldn't checkout the 'try' branch: {}", status)
+            panic!("Couldn't checkout the {} branch: {}", branch, status)
         }
     }
 
@@ -237,18 +237,35 @@ mod git {
         }
     }
 
-    pub fn push_force() {
+    pub fn push(do_force: bool) {
+        let force = if do_force {"--force-with-lease"} else {""};
         let status = Command::new("git")
-            .arg("push").arg("--force-with-lease")
+            .arg("push").arg(force)
             .current_dir("workspace/shurik")
             .status()
             .unwrap_or_else(|e| {
                 panic!("failed to execute process: {}", e)
             });
         if ExitStatus::success(&status) {
-            println!("Push 'try'");
+            println!("Push current branch");
         } else {
-            panic!("Couldn't push the 'try' branch: {}", status)
+            panic!("Couldn't push the current branch: {}", status)
+        }
+    }
+
+    pub fn merge_ff(mr_human_number: u64) {
+        let status = Command::new("git")
+            .arg("merge").arg("try").arg("--ff-only")
+            .arg(&*format!("-m \"Merging MR #{}\"", mr_human_number))
+            .current_dir("workspace/shurik")
+            .status()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        if ExitStatus::success(&status) {
+            println!("Merge master to MR {}", mr_human_number);
+        } else {
+            panic!("Couldn't merge the 'master' branch: {}", status)
         }
     }
 }
@@ -437,9 +454,9 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
         }
 
         git::fetch();
-        git::checkout();
+        git::checkout("try");
         git::reset_hard(&arg);
-        git::push_force();
+        git::push(true);
 
         let http_user = config.get("http-user").unwrap().as_str().unwrap();
         let http_password = config.get("http-password").unwrap().as_str().unwrap();
@@ -475,42 +492,9 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
                     panic!("Don't know what were we building, there's no MR with id {}", mr_id);
                 }
                 {
-                    let status = Command::new("git")
-                        .arg("checkout").arg("master")
-                        .current_dir("workspace/shurik")
-                        .status()
-                        .unwrap_or_else(|e| {
-                            panic!("failed to execute process: {}", e)
-                        });
-                    if ! ExitStatus::success(&status) {
-                        panic!("Couldn't checkout the 'master' branch: {}", status)
-                    }
-                    println!("Checked out 'master'");
-
-                    let status = Command::new("git")
-                        .arg("merge").arg("try").arg("--ff-only")
-                        .arg(&*format!("-m \"Merging MR #{}\"", mr_human_number))
-                        .current_dir("workspace/shurik")
-                        .status()
-                        .unwrap_or_else(|e| {
-                            panic!("failed to execute process: {}", e)
-                        });
-                    if ! ExitStatus::success(&status) {
-                        panic!("Couldn't merge the 'master' branch: {}", status)
-                    }
-                    println!("Merge master to MR {}", mr_human_number);
-
-                    let status = Command::new("git")
-                        .arg("push")
-                        .current_dir("workspace/shurik")
-                        .status()
-                        .unwrap_or_else(|e| {
-                            panic!("failed to execute process: {}", e)
-                        });
-                    if ! ExitStatus::success(&status) {
-                        panic!("Couldn't push the 'master' branch: {}", status)
-                    }
-                    println!("Push 'master'");
+                    git::checkout("master");
+                    git::merge_ff(mr_human_number);
+                    git::push(false);
                 }
 
                 {
