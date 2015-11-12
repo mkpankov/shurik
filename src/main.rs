@@ -207,6 +207,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
         let target_project_id;
         let mr_id;
         let mr_human_number;
+        let request_status;
 
         {
             let &(ref list, ref cvar) = queue;
@@ -221,6 +222,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             target_project_id = request.target_project_id;
             mr_id = request.mr_id;
             mr_human_number = request.mr_human_number;
+            request_status = request.status;
             println!("{:?}", request.status);
         }
 
@@ -397,7 +399,9 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
 
         {
             println!("{}", result_string);
-            if result_string == "SUCCESS" {
+            if result_string == "SUCCESS"
+                && request_status == Status::Open(SubStatusOpen::WaitingForCi)
+            {
                 let &(ref list, _) = queue;
                 if let Some(mut existing_mr) =
                     find_mr_mut(
@@ -407,6 +411,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
                     assert_eq!(existing_mr.status, Status::Open(SubStatusOpen::WaitingForCi));
                     existing_mr.status = Status::Open(SubStatusOpen::WaitingForMerge);
                     println!("Updated existing MR");
+                } else {
+                    panic!("Don't know what were we building, there's no MR with id {}", mr_id);
                 }
                 {
                     let status = Command::new("git")
