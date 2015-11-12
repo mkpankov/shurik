@@ -57,6 +57,7 @@ fn find_mr(list: &LinkedList<BuildRequest>, id: MrUid) -> Option<&BuildRequest> 
         if i.target_project_id == id.target_project_id
             && i.mr_id == id.mr_id
         {
+            println!("{:?}", i);
             return Some(i);
         }
     }
@@ -68,6 +69,7 @@ fn find_mr_mut(list: &mut LinkedList<BuildRequest>, id: MrUid) -> Option<&mut Bu
         if i.target_project_id == id.target_project_id
             && i.mr_id == id.mr_id
         {
+            println!("{:?}", i);
             return Some(i);
         }
     }
@@ -145,8 +147,8 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
     if username == "pankov" {
         let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
         let note = attrs.get("note").unwrap().as_string().unwrap();
-        let project_id = attrs.get("project_id").unwrap().as_u64().unwrap();
-        let mr_id = attrs.get("noteable_id").unwrap().as_u64().unwrap();
+        let project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
+        let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
         if note == "@shurik r+" {
             if let Some(mut existing_mr) =
                 find_mr_mut(
