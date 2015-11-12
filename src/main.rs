@@ -22,21 +22,56 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
-#[derive(Debug, PartialEq, Eq)]
-enum Status {
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum SubStatusOpen {
     WaitingForReview,
     WaitingForCi,
     WaitingForMerge,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Status {
+    Open(SubStatusOpen),
     Merged,
+    Closed,
 }
 
 #[derive(Debug)]
 struct BuildRequest {
     checkout_sha: String,
-    source_project_id: u64,
+    target_project_id: u64,
     mr_id: u64,
     status: Status,
     mr_human_number: u64,
+}
+
+#[derive(Debug)]
+struct MrUid {
+    target_project_id: u64,
+    mr_id: u64,
+}
+
+#[allow(unused)]
+fn find_mr(list: &LinkedList<BuildRequest>, id: MrUid) -> Option<&BuildRequest> {
+    for i in list.iter() {
+        if i.target_project_id == id.target_project_id
+            && i.mr_id == id.mr_id
+        {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn find_mr_mut(list: &mut LinkedList<BuildRequest>, id: MrUid) -> Option<&mut BuildRequest> {
+    for i in list.iter_mut() {
+        if i.target_project_id == id.target_project_id
+            && i.mr_id == id.mr_id
+        {
+            return Some(i);
+        }
+    }
+    None
 }
 
 fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condvar))
@@ -50,26 +85,41 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
     println!("{}", s);
 
     let json: serde_json::value::Value = serde_json::from_str(&s).unwrap();
-    println!("data: {:?}", json);
     println!("object? {}", json.is_object());
     let obj = json.as_object().unwrap();
     let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
     let last_commit = attrs.get("last_commit").unwrap().as_object().unwrap();
     let checkout_sha = last_commit.get("id").unwrap().as_string().unwrap();
-    let source_project_id = attrs.get("source_project_id").unwrap().as_u64().unwrap();
+    let target_project_id = attrs.get("target_project_id").unwrap().as_u64().unwrap();
     let mr_human_number = attrs.get("iid").unwrap().as_u64().unwrap();
     let mr_id = attrs.get("id").unwrap().as_u64().unwrap();
-
-    let incoming = BuildRequest {
-        checkout_sha: checkout_sha.to_owned(),
-        source_project_id: source_project_id,
-        mr_id: mr_id.to_owned(),
-        status: Status::WaitingForReview,
-        mr_human_number: mr_human_number,
+    let action = json.lookup("object_attributes.action").unwrap().as_string().unwrap();
+    let new_status = match action {
+        "open" | "reopen" => Status::Open(SubStatusOpen::WaitingForReview),
+        "close" => Status::Closed,
+        "merge" => Status::Merged,
+        _ => panic!("Unexpected MR action: {}", action),
     };
-    let mut queue = list.lock().unwrap();
-    queue.push_back(incoming);
-    println!("Queued up...");
+
+    if let Some(mut existing_mr) =
+        find_mr_mut(
+            &mut *list.lock().unwrap(),
+            MrUid { target_project_id: target_project_id, mr_id: mr_id })
+    {
+        existing_mr.status = new_status;
+        println!("Updated existing MR");
+    } else {
+        let incoming = BuildRequest {
+            checkout_sha: checkout_sha.to_owned(),
+            target_project_id: target_project_id,
+            mr_id: mr_id.to_owned(),
+            status: new_status,
+            mr_human_number: mr_human_number,
+        };
+        let mut queue = list.lock().unwrap();
+        queue.push_back(incoming);
+        println!("Queued up...");
+    }
 
     return Ok(Response::with(status::Ok));
 }
@@ -85,7 +135,6 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
     println!("{}", s);
 
     let json: serde_json::value::Value = serde_json::from_str(&s).unwrap();
-    println!("data: {:?}", json);
     println!("object? {}", json.is_object());
     let obj = json.as_object().unwrap();
     let user = obj.get("user").unwrap().as_object().unwrap();
@@ -99,11 +148,11 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
         if note == "@shurik r+" {
             let mut list = list.lock().unwrap();
             for i in list.iter_mut() {
-                if i.source_project_id == project_id
+                if i.target_project_id == project_id
                     && i.mr_id == mr_id
                 {
                     println!("Found");
-                    i.status = Status::WaitingForCi;
+                    i.status = Status::Open(SubStatusOpen::WaitingForCi);
                     println!("Updated");
                     break;
                 }
@@ -134,7 +183,6 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
     let mut text = String::new();
     res.read_to_string(&mut text).unwrap();
     let json: serde_json::value::Value = serde_json::from_str(&text).unwrap();
-    println!("data: {:?}", json);
     println!("object? {}", json.is_object());
     let obj = json.as_object().unwrap();
     let private_token = obj.get("private_token").unwrap().as_string().unwrap();
@@ -142,7 +190,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
 
     loop {
         let arg;
-        let source_project_id;
+        let target_project_id;
         let mr_id;
         let mr_human_number;
 
@@ -156,11 +204,11 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             let request = list.pop_front().unwrap();
             println!("Got the request");
             arg = request.checkout_sha;
-            source_project_id = request.source_project_id;
+            target_project_id = request.target_project_id;
             mr_id = request.mr_id;
             mr_human_number = request.mr_human_number;
             println!("{:?}", request.status);
-            assert_eq!(request.status, Status::WaitingForCi);
+            assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
         }
 
         let status = Command::new("git")
@@ -319,7 +367,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
 
                     let message = &*format!("{{ \"note\": \"build status: {}, url: {}\"}}", result_string, arg);
 
-                    let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", gitlab_api_root, source_project_id, mr_id))
+                    let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", gitlab_api_root, target_project_id, mr_id))
                         .headers(headers)
                         .body(message)
                         .send()
@@ -342,12 +390,12 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             let &(ref list, _) = queue;
             let mut list = list.lock().unwrap();
             for i in list.iter_mut() {
-                if i.source_project_id == source_project_id
+                if i.target_project_id == target_project_id
                     && i.mr_id == mr_id
                 {
                     println!("Found");
-                    assert_eq!(i.status, Status::WaitingForCi);
-                    i.status = Status::WaitingForMerge;
+                    assert_eq!(i.status, Status::Open(SubStatusOpen::WaitingForCi));
+                    i.status = Status::Open(SubStatusOpen::WaitingForMerge);
                     println!("Updated");
                     break;
                 }
@@ -401,11 +449,11 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             let &(ref list, _) = queue;
             let mut list = list.lock().unwrap();
             for i in list.iter_mut() {
-                if i.source_project_id == source_project_id
+                if i.target_project_id == target_project_id
                     && i.mr_id == mr_id
                 {
                     println!("Found");
-                    assert_eq!(i.status, Status::WaitingForMerge);
+                    assert_eq!(i.status, Status::Open(SubStatusOpen::WaitingForMerge));
                     i.status = Status::Merged;
                     println!("Updated");
                     break;
