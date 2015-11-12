@@ -31,12 +31,20 @@ enum Status {
     Closed,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ApprovalStatus {
+    Pending,
+    Approved,
+    Rejected,
+}
+
 #[derive(Debug)]
 struct MergeRequest {
     checkout_sha: String,
     target_project_id: u64,
     mr_id: u64,
     status: Status,
+    approval_status: ApprovalStatus,
     mr_human_number: u64,
 }
 
@@ -117,6 +125,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
             mr_id: mr_id.to_owned(),
             status: new_status,
             mr_human_number: mr_human_number,
+            approval_status: ApprovalStatus::Pending,
         };
         list.push_back(incoming);
         println!("Queued up...");
@@ -159,6 +168,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     {
                         if existing_mr.status == Status::Open(SubStatusOpen::WaitingForReview) {
                             existing_mr.status = Status::Open(SubStatusOpen::WaitingForCi);
+                            existing_mr.approval_status = ApprovalStatus::Approved;
                             existing_mr.checkout_sha = last_commit_id.to_owned();
                             println!("Updated existing MR");
                             cvar.notify_one();
@@ -174,6 +184,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     {
                         if existing_mr.status == Status::Open(SubStatusOpen::WaitingForCi) {
                             existing_mr.status = Status::Open(SubStatusOpen::WaitingForReview);
+                            existing_mr.approval_status = ApprovalStatus::Rejected;
                             existing_mr.checkout_sha = last_commit_id.to_owned();
                             println!("Updated existing MR");
                         }
@@ -185,7 +196,8 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                             &mut *list.lock().unwrap(),
                             MrUid { target_project_id: project_id, mr_id: mr_id })
                     {
-                        println!("Only trying, not updating status");
+                        existing_mr.status = Status::Open(SubStatusOpen::WaitingForCi);
+                        println!("Only trying, not updating approval status");
                         existing_mr.checkout_sha = last_commit_id.to_owned();
                         println!("Updated existing MR");
                         cvar.notify_one();
@@ -463,6 +475,9 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             mr_human_number = request.mr_human_number;
             request_status = request.status;
             println!("{:?}", request.status);
+            if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
+                continue;
+            }
         }
 
         git::fetch();
@@ -495,8 +510,13 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                         MrUid { target_project_id: target_project_id, mr_id: mr_id })
                 {
                     if existing_mr.status == Status::Open(SubStatusOpen::WaitingForCi) {
-                        existing_mr.status = Status::Open(SubStatusOpen::WaitingForMerge);
-                        println!("Updated existing MR");
+                        if existing_mr.approval_status == ApprovalStatus::Approved {
+                            existing_mr.status = Status::Open(SubStatusOpen::WaitingForMerge);
+                            println!("Updated existing MR");
+                        } else {
+                            existing_mr.status = Status::Open(SubStatusOpen::WaitingForReview);
+                            println!("Updated existing MR");
+                        }
                     } else {
                         continue;
                     }
