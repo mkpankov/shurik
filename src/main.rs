@@ -347,7 +347,7 @@ mod jenkins {
         arg
     }
 
-    pub fn poll_build(user: &str, password: &str, build_url: &str, token: &str,
+    pub fn poll_build(user: &str, password: &str, build_url: &str, private_token: &str,
                       gitlab_api_root: &str, target_project_id: u64, mr_id: u64) -> String {
         let result_string;
         loop {
@@ -383,7 +383,7 @@ mod jenkins {
                     let client = Client::new();
                     let mut headers = Headers::new();
                     headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
-                    headers.set_raw("PRIVATE-TOKEN", vec![token.to_owned().into_bytes()]);
+                    headers.set_raw("PRIVATE-TOKEN", vec![private_token.to_owned().into_bytes()]);
 
                     println!("headers == {:?}", headers);
 
@@ -426,7 +426,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
     println!("object? {}", json.is_object());
     let obj = json.as_object().unwrap();
     let private_token = obj.get("private_token").unwrap().as_string().unwrap();
-    println!("Logged in to GitLab, token == {}", private_token);
+    println!("Logged in to GitLab, private_token == {}", private_token);
 
     loop {
         let arg;
@@ -468,7 +468,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
 
         let build_url = jenkins::poll_queue(http_user, http_password, &queue_url);
 
-        let result_string = jenkins::poll_build(http_user, http_password, &build_url, token, gitlab_api_root, target_project_id, mr_id);
+        let result_string = jenkins::poll_build(http_user, http_password, &build_url, private_token, gitlab_api_root, target_project_id, mr_id);
 
         {
             println!("{}", result_string);
