@@ -505,25 +505,24 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let mr_human_number;
         let request_status;
 
-        {
-            let &(ref list, ref cvar) = queue;
-            println!("Waiting to get the request...");
-            let mut list = list.lock().unwrap();
-            while list.is_empty() {
-                list = cvar.wait(list).unwrap();
-            }
-            let request = list.pop_front().unwrap();
-            println!("Got the request: {:?}", request);
-            arg = request.checkout_sha;
-            target_project_id = request.target_project_id;
-            mr_id = request.mr_id;
-            mr_human_number = request.mr_human_number;
-            request_status = request.status;
-            println!("{:?}", request.status);
-            if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
-                continue;
-            }
+        let &(ref list, ref cvar) = queue;
+        println!("Waiting to get the request...");
+        let mut list = list.lock().unwrap();
+        while list.is_empty() {
+            list = cvar.wait(list).unwrap();
         }
+        let mut request = list.pop_front().unwrap();
+        println!("Got the request: {:?}", request);
+        arg = request.checkout_sha.clone();
+        target_project_id = request.target_project_id;
+        mr_id = request.mr_id;
+        mr_human_number = request.mr_human_number;
+        request_status = request.status;
+        println!("{:?}", request.status);
+        if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
+            continue;
+        }
+        drop(list);
 
         git::fetch();
         git::checkout("try");
@@ -543,46 +542,29 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 
         let result_string = jenkins::poll_build(http_user, http_password, &build_url, private_token, gitlab_api_root, target_project_id, mr_id);
 
-        {
-            println!("{}", result_string);
-            if result_string == "SUCCESS"
-                && request_status == Status::Open(SubStatusOpen::WaitingForCi)
-            {
+        println!("{}", result_string);
+        if result_string == "SUCCESS" {
+            assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
+            if request.approval_status == ApprovalStatus::Approved {
+                println!("Merging");
+                request.status = Status::Open(SubStatusOpen::WaitingForMerge);
+                git::checkout("master");
+                git::merge_ff(mr_human_number);
+                git::push(false);
+                request.status = Status::Merged;
+                println!("Updated existing MR");
+            } else {
                 let &(ref list, _) = queue;
-                if let Some(mut existing_mr) =
+                if let Some(_) =
                     find_mr_mut(
                         &mut *list.lock().unwrap(),
                         MrUid { target_project_id: target_project_id, mr_id: mr_id })
                 {
-                    if existing_mr.status == Status::Open(SubStatusOpen::WaitingForCi) {
-                        if existing_mr.approval_status == ApprovalStatus::Approved {
-                            existing_mr.status = Status::Open(SubStatusOpen::WaitingForMerge);
-                            println!("Updated existing MR");
-                        } else {
-                            existing_mr.status = Status::Open(SubStatusOpen::WaitingForReview);
-                            println!("Updated existing MR");
-                        }
-                    } else {
-                        continue;
-                    }
+                    println!("The MR was updated, discarding this one");
                 } else {
-                    panic!("Don't know what were we building, there's no MR with id {}", mr_id);
-                }
-
-                let &(ref list, _) = queue;
-
-                if let Some(mut existing_mr) =
-                    find_mr_mut(
-                        &mut *list.lock().unwrap(),
-                        MrUid { target_project_id: target_project_id, mr_id: mr_id })
-                {
-                    if existing_mr.status == Status::Open(SubStatusOpen::WaitingForMerge) {
-                        git::checkout("master");
-                        git::merge_ff(mr_human_number);
-                        git::push(false);
-                        existing_mr.status = Status::Merged;
-                        println!("Updated existing MR");
-                    }
+                    request.status = Status::Open(SubStatusOpen::WaitingForReview);
+                    println!("Updated existing MR");
+                    list.lock().unwrap().push_back(request);
                 }
             }
         }
