@@ -523,24 +523,20 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 } else {
                     panic!("Don't know what were we building, there's no MR with id {}", mr_id);
                 }
-                {
-                    git::checkout("master");
-                    git::merge_ff(mr_human_number);
-                    git::push(false);
-                }
 
-                {
-                    let &(ref list, _) = queue;
+                let &(ref list, _) = queue;
 
-                    if let Some(mut existing_mr) =
-                        find_mr_mut(
-                            &mut *list.lock().unwrap(),
-                            MrUid { target_project_id: target_project_id, mr_id: mr_id })
-                    {
-                        if existing_mr.status == Status::Open(SubStatusOpen::WaitingForMerge) {
-                            existing_mr.status = Status::Merged;
-                            println!("Updated existing MR");
-                        }
+                if let Some(mut existing_mr) =
+                    find_mr_mut(
+                        &mut *list.lock().unwrap(),
+                        MrUid { target_project_id: target_project_id, mr_id: mr_id })
+                {
+                    if existing_mr.status == Status::Open(SubStatusOpen::WaitingForMerge) {
+                        git::checkout("master");
+                        git::merge_ff(mr_human_number);
+                        git::push(false);
+                        existing_mr.status = Status::Merged;
+                        println!("Updated existing MR");
                     }
                 }
             }
