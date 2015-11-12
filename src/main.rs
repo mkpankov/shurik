@@ -264,12 +264,14 @@ mod git {
     pub fn push(do_force: bool) {
         let mut command = Command::new("git");
         let builder = command
-            .arg("push")
-            .current_dir("workspace/shurik");
+            .arg("push");
 
         if do_force {
             builder.arg("--force_with_lease");
         }
+
+        let builder = builder
+            .current_dir("workspace/shurik");
 
         let status = builder
             .status()
