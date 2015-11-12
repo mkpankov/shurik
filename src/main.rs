@@ -144,6 +144,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
         let note = attrs.get("note").unwrap().as_string().unwrap();
         let project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
         let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
+        let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap();
         let mention = "@shurik ";
         let mention_len = mention.len();
         if &note[0..mention_len] == mention {
@@ -156,6 +157,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
                     {
                         if existing_mr.status == Status::Open(SubStatusOpen::WaitingForReview) {
                             existing_mr.status = Status::Open(SubStatusOpen::WaitingForCi);
+                            existing_mr.checkout_sha = last_commit_id.to_owned();
                             println!("Updated existing MR");
                             cvar.notify_one();
                             println!("Notified...");
@@ -170,14 +172,23 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
                     {
                         if existing_mr.status == Status::Open(SubStatusOpen::WaitingForCi) {
                             existing_mr.status = Status::Open(SubStatusOpen::WaitingForReview);
+                            existing_mr.checkout_sha = last_commit_id.to_owned();
                             println!("Updated existing MR");
                         }
                     }
                 },
                 "try" => {
-                    println!("Only trying, not updating status");
-                    cvar.notify_one();
-                    println!("Notified...");
+                    if let Some(mut existing_mr) =
+                        find_mr_mut(
+                            &mut *list.lock().unwrap(),
+                            MrUid { target_project_id: project_id, mr_id: mr_id })
+                    {
+                        println!("Only trying, not updating status");
+                        existing_mr.checkout_sha = last_commit_id.to_owned();
+                        println!("Updated existing MR");
+                        cvar.notify_one();
+                        println!("Notified...");
+                    }
                 }
                 _ => {}
             }
