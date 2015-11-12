@@ -508,10 +508,10 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let &(ref list, ref cvar) = queue;
         println!("Waiting to get the request...");
         let mut list = list.lock().unwrap();
-        println!("{:?}", &*list);
         while list.is_empty() {
             list = cvar.wait(list).unwrap();
         }
+        println!("{:?}", &*list);
         let mut request = list.pop_front().unwrap();
         println!("Got the request: {:?}", request);
         arg = request.checkout_sha.clone();
@@ -554,35 +554,35 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 git::push(false);
                 request.status = Status::Merged;
                 println!("Updated existing MR");
-            } else {
-                let &(ref list, _) = queue;
-                let list = &mut *list.lock().unwrap();
-                let mut need_push_back = false;
-                {
-                    if let Some(new_request) =
-                        find_mr_mut(
-                            list,
-                            MrUid { target_project_id: target_project_id, mr_id: mr_id })
-                    {
-                        if new_request.checkout_sha != request.checkout_sha
-                            || new_request.approval_status != request.approval_status
-                        {
-                            println!("The MR was updated, discarding this one");
-                        } else {
-                            println!("Pushing back old MR");
-                            request.status = Status::Open(SubStatusOpen::WaitingForReview);
-                            need_push_back = true;
-                        }
-                    } else {
-                        println!("Push back old MR and setting it for review");
-                        request.status = Status::Open(SubStatusOpen::WaitingForReview);
-                        need_push_back = true;
-                    }
-                }
-                if need_push_back {
-                    list.push_back(request);
-                }
+                continue;
             }
+        }
+        let &(ref list, _) = queue;
+        let list = &mut *list.lock().unwrap();
+        let mut need_push_back = false;
+        {
+            if let Some(new_request) =
+                find_mr_mut(
+                    list,
+                    MrUid { target_project_id: target_project_id, mr_id: mr_id })
+            {
+                if new_request.checkout_sha != request.checkout_sha
+                    || new_request.approval_status != request.approval_status
+                {
+                    println!("The MR was updated, discarding this one");
+                } else {
+                    println!("Pushing back old MR");
+                    request.status = Status::Open(SubStatusOpen::WaitingForReview);
+                    need_push_back = true;
+                }
+            } else {
+                println!("Push back old MR and setting it for review");
+                request.status = Status::Open(SubStatusOpen::WaitingForReview);
+                need_push_back = true;
+            }
+        }
+        if need_push_back {
+            list.push_back(request);
         }
         println!("{:?}", &*list);
     }
