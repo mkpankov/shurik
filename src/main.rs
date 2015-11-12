@@ -555,16 +555,30 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 println!("Updated existing MR");
             } else {
                 let &(ref list, _) = queue;
-                if let Some(_) =
-                    find_mr_mut(
-                        &mut *list.lock().unwrap(),
-                        MrUid { target_project_id: target_project_id, mr_id: mr_id })
+                let list = &mut *list.lock().unwrap();
+                let mut need_push_back = false;
                 {
-                    println!("The MR was updated, discarding this one");
-                } else {
-                    request.status = Status::Open(SubStatusOpen::WaitingForReview);
-                    println!("Updated existing MR");
-                    list.lock().unwrap().push_back(request);
+                    if let Some(new_request) =
+                        find_mr_mut(
+                            list,
+                            MrUid { target_project_id: target_project_id, mr_id: mr_id })
+                    {
+                        if new_request.checkout_sha != request.checkout_sha
+                            || new_request.approval_status != request.approval_status
+                        {
+                            println!("The MR was updated, discarding this one");
+                        } else {
+                            println!("Pushing back old MR");
+                            need_push_back = true;
+                        }
+                    } else {
+                        println!("Push back old MR and setting it for review");
+                        request.status = Status::Open(SubStatusOpen::WaitingForReview);
+                        need_push_back = true;
+                    }
+                }
+                if need_push_back {
+                    list.push_back(request);
                 }
             }
         }
