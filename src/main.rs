@@ -95,6 +95,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
         "open" | "reopen" => Status::Open(SubStatusOpen::WaitingForReview),
         "close" => Status::Closed,
         "merge" => Status::Merged,
+        "update" => Status::Open(SubStatusOpen::WaitingForReview),
         _ => panic!("Unexpected MR action: {}", action),
     };
 
@@ -106,6 +107,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
                 MrUid { target_project_id: target_project_id, mr_id: mr_id })
         {
             existing_mr.status = new_status;
+            existing_mr.checkout_sha = checkout_sha.to_string();
             println!("Updated existing MR");
             return Ok(Response::with(status::Ok));
         }
