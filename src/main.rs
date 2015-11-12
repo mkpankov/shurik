@@ -569,6 +569,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                             println!("The MR was updated, discarding this one");
                         } else {
                             println!("Pushing back old MR");
+                            request.status = Status::Open(SubStatusOpen::WaitingForReview);
                             need_push_back = true;
                         }
                     } else {
