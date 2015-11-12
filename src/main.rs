@@ -40,12 +40,12 @@ enum ApprovalStatus {
 
 #[derive(Debug)]
 struct MergeRequest {
-    checkout_sha: String,
     target_project_id: u64,
     mr_id: u64,
+    mr_human_number: u64,
+    checkout_sha: String,
     status: Status,
     approval_status: ApprovalStatus,
-    mr_human_number: u64,
 }
 
 #[derive(Debug)]
@@ -115,6 +115,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
                 MrUid { target_project_id: target_project_id, mr_id: mr_id })
         {
             existing_mr.status = new_status;
+            existing_mr.approval_status = ApprovalStatus::Pending;
             existing_mr.checkout_sha = checkout_sha.to_string();
             println!("Updated existing MR");
             return Ok(Response::with(status::Ok));
@@ -149,6 +150,43 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let obj = json.as_object().unwrap();
     let user = obj.get("user").unwrap().as_object().unwrap();
     let username = user.get("username").unwrap().as_string().unwrap();
+
+    let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap();
+    let target_project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
+    let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
+    let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
+    let state = json.lookup("merge_request.state").unwrap().as_string().unwrap();
+    let new_status = match state {
+        "opened" => Status::Open(SubStatusOpen::WaitingForReview),
+        "closed" => Status::Closed,
+        "merged" => Status::Merged,
+        _ => panic!("Unexpected MR state: {}", state),
+    };
+
+    {
+        let mut list = list.lock().unwrap();
+        if let Some(mut existing_mr) =
+            find_mr_mut(
+                &mut *list,
+                MrUid { target_project_id: target_project_id, mr_id: mr_id })
+        {
+            existing_mr.status = new_status;
+            existing_mr.approval_status = ApprovalStatus::Pending;
+            existing_mr.checkout_sha = last_commit_id.to_string();
+            println!("Updated existing MR");
+            return Ok(Response::with(status::Ok));
+        }
+        let incoming = MergeRequest {
+            checkout_sha: last_commit_id.to_owned(),
+            target_project_id: target_project_id,
+            mr_id: mr_id.to_owned(),
+            status: new_status,
+            mr_human_number: mr_human_number,
+            approval_status: ApprovalStatus::Pending,
+        };
+        list.push_back(incoming);
+        println!("Queued up...");
+    }
 
     if username == "pankov" {
         let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
@@ -475,9 +513,9 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             while list.is_empty() {
                 list = cvar.wait(list).unwrap();
             }
-            let request = list.front().unwrap();
+            let request = list.pop_front().unwrap();
             println!("Got the request");
-            arg = request.checkout_sha.clone();
+            arg = request.checkout_sha;
             target_project_id = request.target_project_id;
             mr_id = request.mr_id;
             mr_human_number = request.mr_human_number;
