@@ -157,7 +157,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
     let state = json.lookup("merge_request.state").unwrap().as_string().unwrap();
     let new_status = match state {
-        "opened" => Status::Open(SubStatusOpen::WaitingForReview),
+        "opened" | "reopened" | "updated" => Status::Open(SubStatusOpen::WaitingForReview),
         "closed" => Status::Closed,
         "merged" => Status::Merged,
         _ => panic!("Unexpected MR state: {}", state),
