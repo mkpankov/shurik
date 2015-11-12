@@ -513,7 +513,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 list = cvar.wait(list).unwrap();
             }
             let request = list.pop_front().unwrap();
-            println!("Got the request");
+            println!("Got the request: {:?}", request);
             arg = request.checkout_sha;
             target_project_id = request.target_project_id;
             mr_id = request.mr_id;
