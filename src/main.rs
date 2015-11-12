@@ -8,8 +8,6 @@ extern crate toml;
 
 use clap::App;
 use hyper::Client;
-use hyper::header::{ContentType};
-use hyper::mime::{Mime, TopLevel, SubLevel};
 use iron::*;
 use toml::Table;
 
@@ -17,10 +15,8 @@ use std::collections::LinkedList;
 use std::fs::File;
 use std::io::Read;
 use std::process::{Command, ExitStatus};
-use regex::Regex;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SubStatusOpen {
@@ -193,6 +189,208 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
 }
 
 
+mod git {
+    use ::std::process::{Command, ExitStatus};
+
+    pub fn fetch() {
+        let status = Command::new("git")
+            .arg("fetch")
+            .current_dir("workspace/shurik")
+            .status()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        if ExitStatus::success(&status) {
+            println!("Fetched remote");
+        } else {
+            panic!("Couldn't fetch remote: {}", status)
+        }
+    }
+
+    pub fn checkout() {
+        let status = Command::new("git")
+            .arg("checkout").arg("try")
+            .current_dir("workspace/shurik")
+            .status()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        if ExitStatus::success(&status) {
+            println!("Checked out 'try'");
+        } else {
+            panic!("Couldn't checkout the 'try' branch: {}", status)
+        }
+    }
+
+    pub fn reset_hard(to: &str) {
+        let status = Command::new("git")
+            .arg("reset").arg("--hard").arg(to)
+            .current_dir("workspace/shurik")
+            .status()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        if ExitStatus::success(&status) {
+            println!("Reset 'try' to {}", to);
+        } else {
+            panic!("Couldn't reset the 'try' branch: {}", status)
+        }
+    }
+
+    pub fn push_force() {
+        let status = Command::new("git")
+            .arg("push").arg("--force-with-lease")
+            .current_dir("workspace/shurik")
+            .status()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        if ExitStatus::success(&status) {
+            println!("Push 'try'");
+        } else {
+            panic!("Couldn't push the 'try' branch: {}", status)
+        }
+    }
+}
+
+mod jenkins {
+    use ::std::process::{Command, ExitStatus};
+    use ::regex::Regex;
+    use ::serde_json;
+    use std::time::Duration;
+    use ::std;
+    use ::hyper::header::{ContentType};
+    use ::hyper::mime::{Mime, TopLevel, SubLevel};
+    use ::iron::*;
+    use ::hyper::Client;
+
+    pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str) -> String {
+        let output = Command::new("wget")
+            .arg("-S").arg("-O-")
+            .arg("--no-check-certificate").arg("--auth-no-challenge")
+            .arg(format!("--http-user={}", user))
+            .arg(format!("--http-password={}", password))
+            .arg(format!("{}/?token={}&cause=I+want+to+be+built", job_url, token))
+            .current_dir("workspace/shurik")
+            .output()
+            .unwrap_or_else(|e| {
+                panic!("failed to execute process: {}", e)
+            });
+        let status = output.status;
+        let stderr = output.stderr;
+        let stderr = String::from_utf8_lossy(&stderr);
+        if ! ExitStatus::success(&status) {
+            panic!("Couldn't notify the Jenkins: {}", status)
+        }
+
+        println!("Notified the Jenkins");
+
+        let re = Regex::new(r"Location: ([^\n]*)").unwrap();
+        let location = re.captures(&stderr).unwrap().at(1).unwrap();
+        location.to_owned()
+    }
+
+    pub fn poll_queue(user: &str, password: &str, location: &str) -> String {
+        let arg;
+        loop {
+            let output = Command::new("wget")
+                .arg("-S").arg("-O-")
+                .arg("--no-check-certificate").arg("--auth-no-challenge")
+                .arg(format!("--http-user={}", user))
+                .arg(format!("--http-password={}", password))
+                .arg(format!("{}/api/json?pretty=true", location))
+                .current_dir("workspace/shurik")
+                .output()
+                .unwrap_or_else(|e| {
+                    panic!("failed to execute process: {}", e)
+                });
+            let status = output.status;
+            let stdout = output.stdout;
+            let stdout = ::std::str::from_utf8(&stdout).unwrap();
+            if ! ExitStatus::success(&status) {
+                panic!("Couldn't get queue item from Jenkins: {}", status)
+            }
+
+            println!("Got queue item");
+
+            let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
+            println!("data: {:?}", json);
+            println!("object? {}", json.is_object());
+            let obj = json.as_object().unwrap();
+            if let Some(executable) = obj.get("executable") {
+                let url = executable.as_object().unwrap().get("url").unwrap();
+                arg = url.as_string().unwrap().to_string();
+                println!("Parsed the final url");
+                break;
+            }
+
+            print!("Sleeping...");
+            ::std::thread::sleep(Duration::new(5, 0));
+            println!("ok");
+        }
+        arg
+    }
+
+    pub fn poll_build(user: &str, password: &str, build_url: &str, token: &str,
+                      gitlab_api_root: &str, target_project_id: u64, mr_id: u64) -> String {
+        let result_string;
+        loop {
+            let output = Command::new("wget")
+                .arg("-S").arg("-O-")
+                .arg("--no-check-certificate").arg("--auth-no-challenge")
+                .arg(format!("--http-user={}", user))
+                .arg(format!("--http-password={}", password))
+                .arg(format!("{}/api/json?pretty=true", build_url))
+                .current_dir("workspace/shurik")
+                .output()
+                .unwrap_or_else(|e| {
+                    panic!("failed to execute process: {}", e)
+                });
+            let status = output.status;
+            let stdout = output.stdout;
+            let stdout = std::str::from_utf8(&stdout).unwrap();
+            if ! ExitStatus::success(&status) {
+                panic!("Couldn't poll the Jenkins build: {}", status)
+            }
+
+            println!("Polled");
+
+            let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
+            println!("data: {:?}", json);
+            println!("object? {}", json.is_object());
+            let obj = json.as_object().unwrap();
+            if let Some(result) = obj.get("result") {
+                if ! result.is_null() {
+                    result_string = result.as_string().unwrap().to_owned();
+                    println!("Parsed response, result_string == {}", result_string);
+
+                    let client = Client::new();
+                    let mut headers = Headers::new();
+                    headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
+                    headers.set_raw("PRIVATE-TOKEN", vec![token.to_owned().into_bytes()]);
+
+                    println!("headers == {:?}", headers);
+
+                    let message = &*format!("{{ \"note\": \"build status: {}, url: {}\"}}", result_string, build_url);
+
+                    let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", gitlab_api_root, target_project_id, mr_id))
+                        .headers(headers)
+                        .body(message)
+                        .send()
+                        .unwrap();
+                    assert_eq!(res.status, ::hyper::status::StatusCode::Created);
+                    break;
+                }
+            }
+
+            print!("Sleeping...");
+            std::thread::sleep(Duration::new(5, 0));
+            println!("ok");
+        }
+        result_string
+    }
+}
+
 fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), config: Table) -> !
 {
     let gitlab_user = config.get("user").unwrap().as_str().unwrap();
@@ -238,53 +436,10 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
             println!("{:?}", request.status);
         }
 
-        let status = Command::new("git")
-            .arg("fetch")
-            .current_dir("workspace/shurik")
-            .status()
-            .unwrap_or_else(|e| {
-                panic!("failed to execute process: {}", e)
-            });
-        if ! ExitStatus::success(&status) {
-            panic!("Couldn't fetch remote: {}", status)
-        }
-        println!("Fetched remote");
-
-        let status = Command::new("git")
-            .arg("checkout").arg("try")
-            .current_dir("workspace/shurik")
-            .status()
-            .unwrap_or_else(|e| {
-                panic!("failed to execute process: {}", e)
-            });
-        if ! ExitStatus::success(&status) {
-            panic!("Couldn't checkout the 'try' branch: {}", status)
-        }
-        println!("Checked out 'try'");
-
-        let status = Command::new("git")
-            .arg("reset").arg("--hard").arg(&arg)
-            .current_dir("workspace/shurik")
-            .status()
-            .unwrap_or_else(|e| {
-                panic!("failed to execute process: {}", e)
-            });
-        if ! ExitStatus::success(&status) {
-            panic!("Couldn't reset the 'try' branch: {}", status)
-        }
-        println!("Reset 'try' to {}", arg);
-
-        let status = Command::new("git")
-            .arg("push").arg("--force-with-lease")
-            .current_dir("workspace/shurik")
-            .status()
-            .unwrap_or_else(|e| {
-                panic!("failed to execute process: {}", e)
-            });
-        if ! ExitStatus::success(&status) {
-            panic!("Couldn't push the 'try' branch: {}", status)
-        }
-        println!("Push 'try'");
+        git::fetch();
+        git::checkout();
+        git::reset_hard(&arg);
+        git::push_force();
 
         let http_user = config.get("http-user").unwrap().as_str().unwrap();
         let http_password = config.get("http-password").unwrap().as_str().unwrap();
@@ -292,122 +447,12 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
         let jenkins_job_url = config.get("jenkins-job-url").unwrap().as_str().unwrap();
         println!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
 
-        let output = Command::new("wget")
-            .arg("-S").arg("-O-")
-            .arg("--no-check-certificate").arg("--auth-no-challenge")
-            .arg(format!("--http-user={}", http_user))
-            .arg(format!("--http-password={}", http_password))
-            .arg(format!("{}/?token={}&cause=I+want+to+be+built", jenkins_job_url, token))
-            .current_dir("workspace/shurik")
-            .output()
-            .unwrap_or_else(|e| {
-                panic!("failed to execute process: {}", e)
-            });
-        let status = output.status;
-        let stderr = output.stderr;
-        let stderr = String::from_utf8_lossy(&stderr);
-        if ! ExitStatus::success(&status) {
-            panic!("Couldn't notify the Jenkins: {}", status)
-        }
+        let queue_url = jenkins::enqueue_build(http_user, http_password, jenkins_job_url, token);
+        println!("Parsed the location == {}", queue_url);
 
-        println!("Notified the Jenkins");
+        let build_url = jenkins::poll_queue(http_user, http_password, &queue_url);
 
-        let re = Regex::new(r"Location: ([^\n]*)").unwrap();
-        let location = re.captures(&stderr).unwrap().at(1).unwrap();
-
-        println!("Parsed the location == {}", location);
-
-        let arg;
-        loop {
-            let output = Command::new("wget")
-                .arg("-S").arg("-O-")
-                .arg("--no-check-certificate").arg("--auth-no-challenge")
-                .arg(format!("--http-user={}", http_user))
-                .arg(format!("--http-password={}", http_password))
-                .arg(format!("{}/api/json?pretty=true", location))
-                .current_dir("workspace/shurik")
-                .output()
-                .unwrap_or_else(|e| {
-                    panic!("failed to execute process: {}", e)
-                });
-            let status = output.status;
-            let stdout = output.stdout;
-            let stdout = std::str::from_utf8(&stdout).unwrap();
-            if ! ExitStatus::success(&status) {
-                panic!("Couldn't get queue item from Jenkins: {}", status)
-            }
-
-            println!("Got queue item");
-
-            let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
-            println!("data: {:?}", json);
-            println!("object? {}", json.is_object());
-            let obj = json.as_object().unwrap();
-            if let Some(executable) = obj.get("executable") {
-                let url = executable.as_object().unwrap().get("url").unwrap();
-                arg = url.as_string().unwrap().to_string();
-                println!("Parsed the final url");
-                break;
-            }
-
-            print!("Sleeping...");
-            std::thread::sleep(Duration::new(5, 0));
-            println!("ok");
-        }
-
-        let mut result_string = String::new();
-        loop {
-            let output = Command::new("wget")
-                .arg("-S").arg("-O-")
-                .arg("--no-check-certificate").arg("--auth-no-challenge")
-                .arg(format!("--http-user={}", http_user))
-                .arg(format!("--http-password={}", http_password))
-                .arg(format!("{}/api/json?pretty=true", arg))
-                .current_dir("workspace/shurik")
-                .output()
-                .unwrap_or_else(|e| {
-                    panic!("failed to execute process: {}", e)
-                });
-            let status = output.status;
-            let stdout = output.stdout;
-            let stdout = std::str::from_utf8(&stdout).unwrap();
-            if ! ExitStatus::success(&status) {
-                panic!("Couldn't notify the Jenkins: {}", status)
-            }
-
-            println!("Polled");
-
-            let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
-            println!("data: {:?}", json);
-            println!("object? {}", json.is_object());
-            let obj = json.as_object().unwrap();
-            if let Some(result) = obj.get("result") {
-                if ! result.is_null() {
-                    result_string = result.as_string().unwrap().to_owned();
-                    println!("Parsed response, result_string == {}", result_string);
-
-                    let mut headers = Headers::new();
-                    headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
-                    headers.set_raw("PRIVATE-TOKEN", vec![private_token.to_owned().into_bytes()]);
-
-                    println!("headers == {:?}", headers);
-
-                    let message = &*format!("{{ \"note\": \"build status: {}, url: {}\"}}", result_string, arg);
-
-                    let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", gitlab_api_root, target_project_id, mr_id))
-                        .headers(headers)
-                        .body(message)
-                        .send()
-                        .unwrap();
-                    assert_eq!(res.status, hyper::status::StatusCode::Created);
-                    break;
-                }
-            }
-
-            print!("Sleeping...");
-            std::thread::sleep(Duration::new(5, 0));
-            println!("ok");
-        }
+        let result_string = jenkins::poll_build(http_user, http_password, &build_url, token, gitlab_api_root, target_project_id, mr_id);
 
         {
             println!("{}", result_string);
