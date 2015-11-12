@@ -384,80 +384,74 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
 
         {
             println!("{}", result_string);
-            if result_string == "success" {
-                ;
-            }
-            let &(ref list, _) = queue;
-            if let Some(mut existing_mr) =
-                find_mr_mut(
-                    &mut *list.lock().unwrap(),
-                    MrUid { target_project_id: target_project_id, mr_id: mr_id })
-            {
-                assert_eq!(existing_mr.status, Status::Open(SubStatusOpen::WaitingForCi));
-                existing_mr.status = Status::Open(SubStatusOpen::WaitingForMerge);
-                println!("Updated existing MR");
-            }
-        }
-
-        {
-            let status = Command::new("git")
-                .arg("checkout").arg("master")
-                .current_dir("workspace/shurik")
-                .status()
-                .unwrap_or_else(|e| {
-                    panic!("failed to execute process: {}", e)
-                });
-            if ! ExitStatus::success(&status) {
-                panic!("Couldn't checkout the 'master' branch: {}", status)
-            }
-            println!("Checked out 'master'");
-
-            let status = Command::new("git")
-                .arg("merge").arg("try").arg("--ff-only")
-                .arg(&*format!("-m \"Merging MR #{}\"", mr_human_number))
-                .current_dir("workspace/shurik")
-                .status()
-                .unwrap_or_else(|e| {
-                    panic!("failed to execute process: {}", e)
-                });
-            if ! ExitStatus::success(&status) {
-                panic!("Couldn't merge the 'master' branch: {}", status)
-            }
-            println!("Merge master to MR {}", mr_human_number);
-
-            let status = Command::new("git")
-                .arg("push")
-                .current_dir("workspace/shurik")
-                .status()
-                .unwrap_or_else(|e| {
-                    panic!("failed to execute process: {}", e)
-                });
-            if ! ExitStatus::success(&status) {
-                panic!("Couldn't push the 'master' branch: {}", status)
-            }
-            println!("Push 'master'");
-        }
-
-        {
-            println!("{}", result_string);
-            if result_string == "success" {
-                ;
-            }
-            let &(ref list, _) = queue;
-            let mut list = list.lock().unwrap();
-            for i in list.iter_mut() {
-                if i.target_project_id == target_project_id
-                    && i.mr_id == mr_id
+            if result_string == "SUCCESS" {
+                let &(ref list, _) = queue;
+                if let Some(mut existing_mr) =
+                    find_mr_mut(
+                        &mut *list.lock().unwrap(),
+                        MrUid { target_project_id: target_project_id, mr_id: mr_id })
                 {
-                    println!("Found");
-                    assert_eq!(i.status, Status::Open(SubStatusOpen::WaitingForMerge));
-                    i.status = Status::Merged;
-                    println!("Updated");
-                    break;
+                    assert_eq!(existing_mr.status, Status::Open(SubStatusOpen::WaitingForCi));
+                    existing_mr.status = Status::Open(SubStatusOpen::WaitingForMerge);
+                    println!("Updated existing MR");
+                }
+                {
+                    let status = Command::new("git")
+                        .arg("checkout").arg("master")
+                        .current_dir("workspace/shurik")
+                        .status()
+                        .unwrap_or_else(|e| {
+                            panic!("failed to execute process: {}", e)
+                        });
+                    if ! ExitStatus::success(&status) {
+                        panic!("Couldn't checkout the 'master' branch: {}", status)
+                    }
+                    println!("Checked out 'master'");
+
+                    let status = Command::new("git")
+                        .arg("merge").arg("try").arg("--ff-only")
+                        .arg(&*format!("-m \"Merging MR #{}\"", mr_human_number))
+                        .current_dir("workspace/shurik")
+                        .status()
+                        .unwrap_or_else(|e| {
+                            panic!("failed to execute process: {}", e)
+                        });
+                    if ! ExitStatus::success(&status) {
+                        panic!("Couldn't merge the 'master' branch: {}", status)
+                    }
+                    println!("Merge master to MR {}", mr_human_number);
+
+                    let status = Command::new("git")
+                        .arg("push")
+                        .current_dir("workspace/shurik")
+                        .status()
+                        .unwrap_or_else(|e| {
+                            panic!("failed to execute process: {}", e)
+                        });
+                    if ! ExitStatus::success(&status) {
+                        panic!("Couldn't push the 'master' branch: {}", status)
+                    }
+                    println!("Push 'master'");
+                }
+
+                {
+                    println!("{}", result_string);
+                    let &(ref list, _) = queue;
+                    let mut list = list.lock().unwrap();
+                    for i in list.iter_mut() {
+                        if i.target_project_id == target_project_id
+                            && i.mr_id == mr_id
+                        {
+                            println!("Found");
+                            assert_eq!(i.status, Status::Open(SubStatusOpen::WaitingForMerge));
+                            i.status = Status::Merged;
+                            println!("Updated");
+                            break;
+                        }
+                    }
                 }
             }
         }
-
     }
 }
 
