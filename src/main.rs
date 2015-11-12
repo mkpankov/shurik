@@ -146,17 +146,16 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
         let project_id = attrs.get("project_id").unwrap().as_u64().unwrap();
         let mr_id = attrs.get("noteable_id").unwrap().as_u64().unwrap();
         if note == "@shurik r+" {
-            let mut list = list.lock().unwrap();
-            for i in list.iter_mut() {
-                if i.target_project_id == project_id
-                    && i.mr_id == mr_id
-                {
-                    println!("Found");
-                    i.status = Status::Open(SubStatusOpen::WaitingForCi);
-                    println!("Updated");
+            if let Some(mut existing_mr) =
+                find_mr_mut(
+                    &mut *list.lock().unwrap(),
+                    MrUid { target_project_id: project_id, mr_id: mr_id })
+            {
+                if existing_mr.status == Status::Open(SubStatusOpen::WaitingForReview) {
+                    existing_mr.status = Status::Open(SubStatusOpen::WaitingForCi);
+                    println!("Updated existing MR");
                     cvar.notify_one();
                     println!("Notified...");
-                    break;
                 }
             }
         }
