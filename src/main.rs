@@ -267,7 +267,7 @@ mod git {
             .arg("push");
 
         if do_force {
-            builder.arg("--force_with_lease");
+            builder.arg("--force-with-lease");
         }
 
         let builder = builder
