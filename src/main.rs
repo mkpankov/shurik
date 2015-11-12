@@ -101,14 +101,17 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
         _ => panic!("Unexpected MR action: {}", action),
     };
 
-    if let Some(mut existing_mr) =
-        find_mr_mut(
-            &mut *list.lock().unwrap(),
-            MrUid { target_project_id: target_project_id, mr_id: mr_id })
     {
-        existing_mr.status = new_status;
-        println!("Updated existing MR");
-    } else {
+        let mut list = list.lock().unwrap();
+        if let Some(mut existing_mr) =
+            find_mr_mut(
+                &mut *list,
+                MrUid { target_project_id: target_project_id, mr_id: mr_id })
+        {
+            existing_mr.status = new_status;
+            println!("Updated existing MR");
+            return Ok(Response::with(status::Ok));
+        }
         let incoming = BuildRequest {
             checkout_sha: checkout_sha.to_owned(),
             target_project_id: target_project_id,
@@ -116,8 +119,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, Condva
             status: new_status,
             mr_human_number: mr_human_number,
         };
-        let mut queue = list.lock().unwrap();
-        queue.push_back(incoming);
+        list.push_back(incoming);
         println!("Queued up...");
     }
 
