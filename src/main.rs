@@ -508,6 +508,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let &(ref list, ref cvar) = queue;
         println!("Waiting to get the request...");
         let mut list = list.lock().unwrap();
+        println!("{:?}", &*list);
         while list.is_empty() {
             list = cvar.wait(list).unwrap();
         }
@@ -583,6 +584,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 }
             }
         }
+        println!("{:?}", &*list);
     }
 }
 
