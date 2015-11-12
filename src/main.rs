@@ -154,14 +154,13 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
                     println!("Found");
                     i.status = Status::Open(SubStatusOpen::WaitingForCi);
                     println!("Updated");
+                    cvar.notify_one();
+                    println!("Notified...");
                     break;
                 }
             }
         }
     }
-
-    cvar.notify_one();
-    println!("Notified...");
 
     return Ok(Response::with(status::Ok));
 }
