@@ -8,4 +8,4 @@ set -x
 
 cargo build
 
-sleep 120
+sleep 30
