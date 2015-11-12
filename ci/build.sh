@@ -7,5 +7,3 @@ set -x
 . ./environment
 
 cargo build
-
-sleep 30
