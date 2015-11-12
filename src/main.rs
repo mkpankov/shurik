@@ -167,6 +167,18 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<BuildRequest>>, C
                         }
                     }
                 },
+                "r-" => {
+                    if let Some(mut existing_mr) =
+                        find_mr_mut(
+                            &mut *list.lock().unwrap(),
+                            MrUid { target_project_id: project_id, mr_id: mr_id })
+                    {
+                        if existing_mr.status == Status::Open(SubStatusOpen::WaitingForCi) {
+                            existing_mr.status = Status::Open(SubStatusOpen::WaitingForReview);
+                            println!("Updated existing MR");
+                        }
+                    }
+                },
                 "try" => {
                     println!("Only trying, not updating status");
                     cvar.notify_one();
@@ -408,9 +420,12 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
                         &mut *list.lock().unwrap(),
                         MrUid { target_project_id: target_project_id, mr_id: mr_id })
                 {
-                    assert_eq!(existing_mr.status, Status::Open(SubStatusOpen::WaitingForCi));
-                    existing_mr.status = Status::Open(SubStatusOpen::WaitingForMerge);
-                    println!("Updated existing MR");
+                    if existing_mr.status == Status::Open(SubStatusOpen::WaitingForCi) {
+                        existing_mr.status = Status::Open(SubStatusOpen::WaitingForMerge);
+                        println!("Updated existing MR");
+                    } else {
+                        continue;
+                    }
                 } else {
                     panic!("Don't know what were we building, there's no MR with id {}", mr_id);
                 }
