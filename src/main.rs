@@ -387,17 +387,14 @@ fn handle_build_request(queue: &(Mutex<LinkedList<BuildRequest>>, Condvar), conf
                 ;
             }
             let &(ref list, _) = queue;
-            let mut list = list.lock().unwrap();
-            for i in list.iter_mut() {
-                if i.target_project_id == target_project_id
-                    && i.mr_id == mr_id
-                {
-                    println!("Found");
-                    assert_eq!(i.status, Status::Open(SubStatusOpen::WaitingForCi));
-                    i.status = Status::Open(SubStatusOpen::WaitingForMerge);
-                    println!("Updated");
-                    break;
-                }
+            if let Some(mut existing_mr) =
+                find_mr_mut(
+                    &mut *list.lock().unwrap(),
+                    MrUid { target_project_id: target_project_id, mr_id: mr_id })
+            {
+                assert_eq!(existing_mr.status, Status::Open(SubStatusOpen::WaitingForCi));
+                existing_mr.status = Status::Open(SubStatusOpen::WaitingForMerge);
+                println!("Updated existing MR");
             }
         }
 
