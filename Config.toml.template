@@ -1,0 +1,13 @@
+[gitlab]
+
+user = "foobar"
+password = "barbaz"
+url = "http://gitlab.host/api/v3"
+reviewers = [ "foobaz_gitlab_login" ]
+
+[jenkins]
+
+user = "foobar"
+password = "foobar_api_token"
+token = "build_token_from_jenkins"
+job-url = "https://hudson.host/jenkins/job/shurik/build"
