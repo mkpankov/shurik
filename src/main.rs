@@ -143,12 +143,11 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
 fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar))
                   -> IronResult<Response> {
     println!("handle_comment started       : {}", time::precise_time_ns());
-    let &(ref list, ref cvar) = queue;
-    let ref mut body = req.body;
-    let mut s: String = String::new();
-    body.read_to_string(&mut s).unwrap();
 
     println!("{}", req.url);
+    let mut s: String = String::new();
+    let ref mut body = req.body;
+    body.read_to_string(&mut s).unwrap();
     println!("{}", s);
 
     let json: serde_json::value::Value = serde_json::from_str(&s).unwrap();
@@ -156,63 +155,37 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let obj = json.as_object().unwrap();
     let user = obj.get("user").unwrap().as_object().unwrap();
     let username = user.get("username").unwrap().as_string().unwrap();
-
-    let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap();
-    let target_project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
-    let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
-    let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
-    let state = json.lookup("merge_request.state").unwrap().as_string().unwrap();
-    let new_status = match state {
-        "opened" | "reopened" | "updated" => Status::Open(SubStatusOpen::WaitingForReview),
-        "closed" => Status::Closed,
-        "merged" => Status::Merged,
-        _ => panic!("Unexpected MR state: {}", state),
-    };
-
     if username == "pankov" {
-        {
-            let mut found_existing = false;
-            let mut list = list.lock().unwrap();
-            if let Some(mut existing_mr) =
-                find_mr_mut(
-                    &mut *list,
-                    MrUid { target_project_id: target_project_id, mr_id: mr_id })
-            {
-                found_existing = true;
-                existing_mr.status = new_status;
-                existing_mr.approval_status = ApprovalStatus::Pending;
-                existing_mr.checkout_sha = last_commit_id.to_string();
-                println!("Updated existing MR");
-            }
-            if ! found_existing {
-                let incoming = MergeRequest {
-                    checkout_sha: last_commit_id.to_owned(),
-                    target_project_id: target_project_id,
-                    mr_id: mr_id.to_owned(),
-                    status: new_status,
-                    mr_human_number: mr_human_number,
-                    approval_status: ApprovalStatus::Pending,
-                };
-                list.push_back(incoming);
-                println!("Queued up...");
-            }
-        }
+        let &(ref list, ref cvar) = queue;
+
+        let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap().to_owned();
+        let target_project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
+        let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
+        let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
+        let state = json.lookup("merge_request.state").unwrap().as_string().unwrap();
+        let new_status = match state {
+            "opened" | "reopened" | "updated" => Status::Open(SubStatusOpen::WaitingForReview),
+            "closed" => Status::Closed,
+            "merged" => Status::Merged,
+            _ => panic!("Unexpected MR state: {}", state),
+        };
 
         let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
         let note = attrs.get("note").unwrap().as_string().unwrap();
-        let project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
-        let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
-        let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap();
+
         let mention = "@shurik ";
         let mention_len = mention.len();
         if &note[0..mention_len] == mention {
             match &note[mention_len..] {
                 "r+" => {
+                    let mut found_existing = false;
+                    let mut list = list.lock().unwrap();
                     if let Some(mut existing_mr) =
                         find_mr_mut(
-                            &mut *list.lock().unwrap(),
-                            MrUid { target_project_id: project_id, mr_id: mr_id })
+                            &mut *list,
+                            MrUid { target_project_id: target_project_id, mr_id: mr_id })
                     {
+                        found_existing = true;
                         if existing_mr.status == Status::Open(SubStatusOpen::WaitingForReview) {
                             existing_mr.status = Status::Open(SubStatusOpen::WaitingForCi);
                             existing_mr.approval_status = ApprovalStatus::Approved;
@@ -222,31 +195,82 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                             println!("Notified...");
                         }
                     }
+                    if ! found_existing {
+                        let incoming = MergeRequest {
+                            checkout_sha: last_commit_id.to_owned(),
+                            target_project_id: target_project_id,
+                            mr_id: mr_id.to_owned(),
+                            status: Status::Open(SubStatusOpen::WaitingForCi),
+                            mr_human_number: mr_human_number,
+                            approval_status: ApprovalStatus::Approved,
+                        };
+                        list.push_back(incoming);
+                        println!("Queued up...");
+                        cvar.notify_one();
+                        println!("Notified...");
+                    }
                 },
                 "r-" => {
+                    let mut found_existing = false;
+                    let mut list = list.lock().unwrap();
                     if let Some(mut existing_mr) =
                         find_mr_mut(
-                            &mut *list.lock().unwrap(),
-                            MrUid { target_project_id: project_id, mr_id: mr_id })
+                            &mut *list,
+                            MrUid { target_project_id: target_project_id, mr_id: mr_id })
                     {
-                        if existing_mr.status == Status::Open(SubStatusOpen::WaitingForCi) {
+                        found_existing = true;
+                        if existing_mr.status == Status::Open(SubStatusOpen::WaitingForCi)
+                            || existing_mr.status == Status::Open(SubStatusOpen::WaitingForMerge)
+                        {
                             existing_mr.status = Status::Open(SubStatusOpen::WaitingForReview);
                             existing_mr.approval_status = ApprovalStatus::Rejected;
                             existing_mr.checkout_sha = last_commit_id.to_owned();
                             println!("Updated existing MR");
+                            cvar.notify_one();
+                            println!("Notified...");
                         }
+                    }
+                    if ! found_existing {
+                        let incoming = MergeRequest {
+                            checkout_sha: last_commit_id.to_owned(),
+                            target_project_id: target_project_id,
+                            mr_id: mr_id.to_owned(),
+                            status: Status::Open(SubStatusOpen::WaitingForReview),
+                            mr_human_number: mr_human_number,
+                            approval_status: ApprovalStatus::Rejected,
+                        };
+                        list.push_back(incoming);
+                        println!("Queued up...");
+                        cvar.notify_one();
+                        println!("Notified...");
                     }
                 },
                 "try" => {
+                    let mut found_existing = false;
+                    let mut list = list.lock().unwrap();
                     if let Some(mut existing_mr) =
                         find_mr_mut(
-                            &mut *list.lock().unwrap(),
-                            MrUid { target_project_id: project_id, mr_id: mr_id })
+                            &mut *list,
+                            MrUid { target_project_id: target_project_id, mr_id: mr_id })
                     {
+                        found_existing = true;
                         existing_mr.status = Status::Open(SubStatusOpen::WaitingForCi);
-                        println!("Only trying, not updating approval status");
                         existing_mr.checkout_sha = last_commit_id.to_owned();
                         println!("Updated existing MR");
+                        cvar.notify_one();
+                        println!("Notified...");
+                    }
+                    if ! found_existing {
+                        let incoming = MergeRequest {
+                            checkout_sha: last_commit_id.to_owned(),
+                            target_project_id: target_project_id,
+                            mr_id: mr_id.to_owned(),
+                            status: Status::Open(SubStatusOpen::WaitingForCi),
+                            mr_human_number: mr_human_number,
+                            approval_status: ApprovalStatus::Pending,
+                        };
+                        list.push_back(incoming);
+                        println!("Queued up...");
                         cvar.notify_one();
                         println!("Notified...");
                     }
