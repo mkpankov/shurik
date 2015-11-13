@@ -81,6 +81,51 @@ fn find_mr_mut(list: &mut LinkedList<MergeRequest>, id: MrUid) -> Option<&mut Me
     None
 }
 
+struct MergeRequestBuilder {
+    id: MrUid,
+    human_number: u64,
+    checkout_sha: Option<String>,
+    status: Option<Status>,
+    approval_status: Option<ApprovalStatus>,
+}
+
+impl MergeRequestBuilder {
+    fn new(id: MrUid, human_number: u64) -> Self {
+        MergeRequestBuilder {
+            id: id,
+            human_number: human_number,
+            checkout_sha: None,
+            status: None,
+            approval_status: None,
+        }
+    }
+    fn with_checkout_sha(mut self, checkout_sha: &str) -> Self {
+        self.checkout_sha = Some(checkout_sha.to_owned());
+        self
+    }
+    fn with_status(mut self, status: Status) -> Self {
+        self.status = Some(status);
+        self
+    }
+    fn with_approval_status(mut self, approval_status: ApprovalStatus) -> Self {
+        self.approval_status = Some(approval_status);
+        self
+    }
+    fn build(self) -> Result<MergeRequest, ()> {
+        if let (Some(checkout_sha), Some(status), Some(approval_status)) = (self.checkout_sha, self.status, self.approval_status) {
+            Ok(MergeRequest {
+                id: self.id,
+                human_number: self.human_number,
+                checkout_sha: checkout_sha,
+                status: status,
+                approval_status: approval_status,
+            })
+        } else {
+            Err(())
+        }
+    }
+}
+
 fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
                        id: MrUid,
                        human_number: u64,
@@ -91,7 +136,9 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
     if let Some(mut existing_mr) =
         find_mr_mut(&mut *list, id)
     {
-        if old_statuses.iter().any(|x| *x == existing_mr.status) {
+        if old_statuses.iter().any(|x| *x == existing_mr.status)
+            || old_statuses.len() == 0
+        {
             if let Some(new_status) = new_status {
                 existing_mr.status = new_status;
             }
@@ -106,19 +153,15 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
         return;
     }
 
-    if let (Some(new_checkout_sha), Some(new_status), Some(new_approval_status)) =
-        (new_checkout_sha, new_status, new_approval_status)
-    {
-        let incoming = MergeRequest {
-            id: id,
-            human_number: human_number,
-            checkout_sha: new_checkout_sha.to_owned(),
-            status: new_status,
-            approval_status: new_approval_status,
-        };
-        list.push_back(incoming);
-        println!("Queued up MR: {:?}", list.back());
-    }
+    let incoming = MergeRequestBuilder::new(id, human_number)
+        .with_checkout_sha(new_checkout_sha.unwrap())
+        .with_status(new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)))
+        .with_approval_status(new_approval_status.unwrap())
+        .build()
+        .unwrap();
+
+    list.push_back(incoming);
+    println!("Queued up MR: {:?}", list.back());
 }
 
 fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar))
@@ -260,33 +303,18 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                         );
                 },
                 "try" => {
-                    let mut found_existing = false;
                     let mut list = list.lock().unwrap();
-                    if let Some(mut existing_mr) =
-                        find_mr_mut(
-                            &mut *list,
-                            MrUid { target_project_id: target_project_id, id: mr_id })
-                    {
-                        found_existing = true;
-                        existing_mr.status = Status::Open(SubStatusOpen::WaitingForCi);
-                        existing_mr.checkout_sha = last_commit_id.to_owned();
-                        println!("Updated existing MR");
-                        cvar.notify_one();
-                        println!("Notified...");
-                    }
-                    if ! found_existing {
-                        let incoming = MergeRequest {
-                            id: MrUid { target_project_id: target_project_id, id: mr_id },
-                            checkout_sha: last_commit_id.to_owned(),
-                            status: Status::Open(SubStatusOpen::WaitingForCi),
-                            human_number: mr_human_number,
-                            approval_status: ApprovalStatus::Pending,
-                        };
-                        list.push_back(incoming);
-                        println!("Queued up...");
-                        cvar.notify_one();
-                        println!("Notified...");
-                    }
+                    update_or_create_mr(
+                        &mut *list,
+                        MrUid { target_project_id: target_project_id, id: mr_id },
+                        mr_human_number,
+                        &[],
+                        Some(&last_commit_id),
+                        Some(Status::Open(SubStatusOpen::WaitingForCi)),
+                        None,
+                        );
+                    cvar.notify_one();
+                    println!("Notified...");
                 }
                 _ => {}
             }
