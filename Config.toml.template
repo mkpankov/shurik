@@ -5,6 +5,9 @@ password = "barbaz"
 url = "http://gitlab.host/api/v3"
 reviewers = [ "foobaz_gitlab_login" ]
 
+webhook-address = "your-ip-or-hostname-here"
+webhook-port = "10042"
+
 [jenkins]
 
 user = "foobar"
