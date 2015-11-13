@@ -382,7 +382,7 @@ mod jenkins {
     use std::time::Duration;
     use ::std;
     use ::iron::*;
-    
+
     pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str) -> String {
         let output = Command::new("wget")
             .arg("-S").arg("-O-")
@@ -564,6 +564,25 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 
         println!("{}", result_string);
         if result_string == "SUCCESS" {
+            let &(ref mutex, _) = queue;
+            let list = &mut *mutex.lock().unwrap();
+            if let Some(new_request) =
+                find_mr_mut(
+                    list,
+                    MrUid { target_project_id: target_project_id, mr_id: mr_id })
+            {
+                if new_request.checkout_sha == request.checkout_sha {
+                    if new_request.approval_status != ApprovalStatus::Approved {
+                        println!("The MR was rejected in the meantime, not merging");
+                        continue;
+                    } else {
+                        println!("MR has new comments, and head is same commit, so it doesn't make sense to account for changes");
+                    }
+                } else {
+                    println!("MR head is different commit, not merging");
+                    continue;
+                }
+            }
             assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
             if request.approval_status == ApprovalStatus::Approved {
                 println!("Merging");
