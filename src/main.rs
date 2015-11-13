@@ -84,22 +84,25 @@ fn find_mr_mut(list: &mut LinkedList<MergeRequest>, id: MrUid) -> Option<&mut Me
 fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
                        id: MrUid,
                        human_number: u64,
+                       old_status: Status,
                        new_checkout_sha: Option<&str>,
                        new_status: Option<Status>,
                        new_approval_status: Option<ApprovalStatus>,) {
     if let Some(mut existing_mr) =
         find_mr_mut(&mut *list, id)
     {
-        if let Some(new_status) = new_status {
-            existing_mr.status = new_status;
+        if existing_mr.status == old_status {
+            if let Some(new_status) = new_status {
+                existing_mr.status = new_status;
+            }
+            if let Some(new_approval_status) = new_approval_status {
+                existing_mr.approval_status = new_approval_status;
+            }
+            if let Some(new_checkout_sha) = new_checkout_sha {
+                existing_mr.checkout_sha = new_checkout_sha.to_owned();
+            }
+            println!("Updated existing MR: {:?}", existing_mr);
         }
-        if let Some(new_approval_status) = new_approval_status {
-            existing_mr.approval_status = new_approval_status;
-        }
-        if let Some(new_checkout_sha) = new_checkout_sha {
-            existing_mr.checkout_sha = new_checkout_sha.to_owned();
-        }
-        println!("Updated existing MR");
         return;
     }
 
@@ -114,6 +117,7 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
             approval_status: new_approval_status,
         };
         list.push_back(incoming);
+        println!("Queued up MR: {:?}", list.back());
     }
 }
 
@@ -228,36 +232,18 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
         if &note[0..mention_len] == mention {
             match &note[mention_len..] {
                 "r+" => {
-                    let mut found_existing = false;
                     let mut list = list.lock().unwrap();
-                    if let Some(mut existing_mr) =
-                        find_mr_mut(
-                            &mut *list,
-                            MrUid { target_project_id: target_project_id, id: mr_id })
-                    {
-                        found_existing = true;
-                        if existing_mr.status == Status::Open(SubStatusOpen::WaitingForReview) {
-                            existing_mr.status = Status::Open(SubStatusOpen::WaitingForCi);
-                            existing_mr.approval_status = ApprovalStatus::Approved;
-                            existing_mr.checkout_sha = last_commit_id.to_owned();
-                            println!("Updated existing MR");
-                            cvar.notify_one();
-                            println!("Notified...");
-                        }
-                    }
-                    if ! found_existing {
-                        let incoming = MergeRequest {
-                            id: MrUid { target_project_id: target_project_id, id: mr_id,},
-                            checkout_sha: last_commit_id.to_owned(),
-                            status: Status::Open(SubStatusOpen::WaitingForCi),
-                            human_number: mr_human_number,
-                            approval_status: ApprovalStatus::Approved,
-                        };
-                        list.push_back(incoming);
-                        println!("Queued up...");
-                        cvar.notify_one();
-                        println!("Notified...");
-                    }
+                    update_or_create_mr(
+                        &mut *list,
+                        MrUid { target_project_id: target_project_id, id: mr_id },
+                        mr_human_number,
+                        Status::Open(SubStatusOpen::WaitingForReview),
+                        Some(&last_commit_id),
+                        Some(Status::Open(SubStatusOpen::WaitingForCi)),
+                        Some(ApprovalStatus::Approved),
+                        );
+                    cvar.notify_one();
+                    println!("Notified...");
                 },
                 "r-" => {
                     let mut found_existing = false;
