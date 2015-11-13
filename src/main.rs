@@ -251,7 +251,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let user = obj.get("user").unwrap().as_object().unwrap();
     let username = user.get("username").unwrap().as_string().unwrap();
 
-    let reviewers = config.lookup("reviewers").unwrap().as_slice().unwrap();
+    let reviewers = config.lookup("gitlab.reviewers").unwrap().as_slice().unwrap();
     let is_comment_author_reviewer = reviewers.iter().any(|s| s.as_str().unwrap() == username);
 
     if is_comment_author_reviewer {
@@ -333,9 +333,9 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), config: &toml::Value) -> !
 {
     println!("handle_build_request started : {}", time::precise_time_ns());
-    let gitlab_user = config.lookup("user").unwrap().as_str().unwrap();
-    let gitlab_password = config.lookup("password").unwrap().as_str().unwrap();
-    let gitlab_api_root = config.lookup("url").unwrap().as_str().unwrap();
+    let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
+    let gitlab_password = config.lookup("gitlab.password").unwrap().as_str().unwrap();
+    let gitlab_api_root = config.lookup("gitlab.url").unwrap().as_str().unwrap();
 
     let client = Client::new();
 
