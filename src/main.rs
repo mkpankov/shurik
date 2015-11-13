@@ -499,9 +499,26 @@ fn main() {
 
     println!("Dry run: {}", matches.is_present("dry-run"));
     let gitlab_port =
-        matches.value_of("GITLAB_PORT").unwrap_or("10042").parse().unwrap_or(10042);
+        matches
+        .value_of("GITLAB_PORT")
+        .unwrap_or(
+            config.lookup("gitlab.webhook-port")
+                .unwrap_or(
+                    &toml::Value::String("10042".to_owned()))
+                .as_str()
+                .unwrap())
+        .parse().unwrap_or(10042);
+    let default_address = toml::Value::String("localhost".to_owned());
     let gitlab_address =
-        matches.value_of("GITLAB_ADDRESS").unwrap_or("localhost");
+        matches
+        .value_of("GITLAB_ADDRESS")
+        .unwrap_or(
+            config.lookup("gitlab.webhook-address")
+                .unwrap_or(
+                    &default_address)
+                .as_str()
+                .unwrap())
+        .to_owned();
     println!("GitLab port: {}", gitlab_port);
     println!("GitLab address: {}", gitlab_address);
 
@@ -522,7 +539,7 @@ fn main() {
                 move |req: &mut Request|
                 handle_comment(req, &*queue3, &*config2));
     Iron::new(router).http(
-        (gitlab_address, gitlab_port))
+        (&*gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
     builder.join().unwrap();
 }
