@@ -164,27 +164,31 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     };
 
     {
+        let mut found_existing = false;
         let mut list = list.lock().unwrap();
         if let Some(mut existing_mr) =
             find_mr_mut(
                 &mut *list,
                 MrUid { target_project_id: target_project_id, mr_id: mr_id })
         {
+            found_existing = true;
             existing_mr.status = new_status;
             existing_mr.approval_status = ApprovalStatus::Pending;
             existing_mr.checkout_sha = last_commit_id.to_string();
             println!("Updated existing MR");
         }
-        let incoming = MergeRequest {
-            checkout_sha: last_commit_id.to_owned(),
-            target_project_id: target_project_id,
-            mr_id: mr_id.to_owned(),
-            status: new_status,
-            mr_human_number: mr_human_number,
-            approval_status: ApprovalStatus::Pending,
-        };
-        list.push_back(incoming);
-        println!("Queued up...");
+        if ! found_existing {
+            let incoming = MergeRequest {
+                checkout_sha: last_commit_id.to_owned(),
+                target_project_id: target_project_id,
+                mr_id: mr_id.to_owned(),
+                status: new_status,
+                mr_human_number: mr_human_number,
+                approval_status: ApprovalStatus::Pending,
+            };
+            list.push_back(incoming);
+            println!("Queued up...");
+        }
     }
 
     if username == "pankov" {
