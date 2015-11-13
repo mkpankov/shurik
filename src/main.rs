@@ -21,6 +21,8 @@ mod git;
 mod jenkins;
 mod gitlab;
 
+const CONFLICT_MAKER: usize = 17;
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SubStatusOpen {
     WaitingForReview,
