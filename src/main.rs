@@ -294,6 +294,8 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                 _ => {}
             }
         }
+    } else {
+        println!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
     }
 
     println!("handle_comment finished      : {}", time::precise_time_ns());
