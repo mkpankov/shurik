@@ -163,6 +163,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
         let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
         let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
         let state = json.lookup("merge_request.state").unwrap().as_string().unwrap();
+        // This is unused as we only handle comments that are issued by reviewer
         let new_status = match state {
             "opened" | "reopened" | "updated" => Status::Open(SubStatusOpen::WaitingForReview),
             "closed" => Status::Closed,
