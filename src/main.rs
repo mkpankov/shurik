@@ -373,7 +373,6 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         drop(list);
 
         let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
-
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
         git::fetch();
@@ -403,24 +402,32 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 if new_request.checkout_sha == request.checkout_sha {
                     if new_request.approval_status != ApprovalStatus::Approved {
                         println!("The MR was rejected in the meantime, not merging");
+                        let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, коммит запретили. Не сливаю\"}}");
+                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                         continue;
                     } else {
                         println!("MR has new comments, and head is same commit, so it doesn't make sense to account for changes");
                     }
                 } else {
                     println!("MR head is different commit, not merging");
+                    let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR обновился. Не сливаю\"}}");
+                    gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                     continue;
                 }
             }
             assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
             if request.approval_status == ApprovalStatus::Approved {
                 println!("Merging");
+                let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
+                gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                 request.status = Status::Open(SubStatusOpen::WaitingForMerge);
                 git::checkout("master");
                 git::merge_ff(mr_human_number);
                 git::push(false);
                 request.status = Status::Merged;
                 println!("Updated existing MR");
+                let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
+                gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                 continue;
             }
         }
@@ -451,7 +458,16 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         }
         println!("{:?}", &*list);
 
-        let message = &*format!("{{ \"note\": \"build status: {}, url: {}\"}}", result_string, build_url);
+        let build_result_message = match &*result_string {
+            "SUCCESS" => "успешно",
+            _ => "с ошибками",
+        };
+        let indicator = match &*result_string {
+            "SUCCESS" => ":sunny:",
+            _ => ":bangbang:",
+        };
+
+        let message = &*format!("{{ \"note\": \"{} тестирование завершено [{}]({})\"}}", indicator, build_result_message, build_url);
 
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
