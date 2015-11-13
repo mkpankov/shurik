@@ -9,10 +9,7 @@ extern crate toml;
 
 use clap::App;
 use hyper::Client;
-use hyper::header::{ContentType};
-use hyper::mime::{Mime, TopLevel, SubLevel};
 use iron::*;
-use toml::Table;
 
 use std::collections::LinkedList;
 use std::fs::File;
@@ -22,6 +19,7 @@ use std::thread;
 
 mod git;
 mod jenkins;
+mod gitlab;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SubStatusOpen {
@@ -54,7 +52,7 @@ struct MergeRequest {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct MrUid {
+pub struct MrUid {
     target_project_id: u64,
     id: u64,
 }
@@ -450,26 +448,15 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 need_push_back = true;
             }
         }
+        let mr_id = request.id.clone();
         if need_push_back {
             list.push_back(request);
         }
         println!("{:?}", &*list);
 
-        let client = Client::new();
-        let mut headers = Headers::new();
-        headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
-        headers.set_raw("PRIVATE-TOKEN", vec![private_token.to_owned().into_bytes()]);
-
-        println!("headers == {:?}", headers);
-
         let message = &*format!("{{ \"note\": \"build status: {}, url: {}\"}}", result_string, build_url);
 
-        let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", gitlab_api_root, target_project_id, mr_id))
-            .headers(headers)
-            .body(message)
-            .send()
-            .unwrap();
-        assert_eq!(res.status, ::hyper::status::StatusCode::Created);
+        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
         drop(list);
         println!("handle_build_request finished: {}", time::precise_time_ns());
