@@ -95,6 +95,11 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
 
     let json: serde_json::value::Value = serde_json::from_str(&s).unwrap();
     println!("object? {}", json.is_object());
+    let object_kind = json.lookup("object_kind").unwrap().as_string().unwrap();
+    if object_kind != "merge_request" {
+        println!("This endpoint only accepts objects with \"object_kind\":\"merge_request\"");
+        return Ok(Response::with(status::Ok));
+    }
     let obj = json.as_object().unwrap();
     let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
     let last_commit = attrs.get("last_commit").unwrap().as_object().unwrap();
@@ -152,6 +157,11 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 
     let json: serde_json::value::Value = serde_json::from_str(&s).unwrap();
     println!("object? {}", json.is_object());
+    let object_kind = json.lookup("object_kind").unwrap().as_string().unwrap();
+    if object_kind != "note" {
+        println!("This endpoint only accepts objects with \"object_kind\":\"note\"");
+        return Ok(Response::with(status::Ok));
+    }
     let obj = json.as_object().unwrap();
     let user = obj.get("user").unwrap().as_object().unwrap();
     let username = user.get("username").unwrap().as_string().unwrap();
