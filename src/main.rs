@@ -4,10 +4,13 @@ extern crate iron;
 extern crate regex;
 extern crate router;
 extern crate serde_json;
+extern crate time;
 extern crate toml;
 
 use clap::App;
 use hyper::Client;
+use hyper::header::{ContentType};
+use hyper::mime::{Mime, TopLevel, SubLevel};
 use iron::*;
 use toml::Table;
 
@@ -81,6 +84,7 @@ fn find_mr_mut(list: &mut LinkedList<MergeRequest>, id: MrUid) -> Option<&mut Me
 
 fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar))
              -> IronResult<Response> {
+    println!("handle_mr started            : {}", time::precise_time_ns());
     let &(ref list, _) = queue;
     let ref mut body = req.body;
     let mut s: String = String::new();
@@ -132,11 +136,13 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
         println!("Queued up...");
     }
 
+    println!("handle_mr finished           : {}", time::precise_time_ns());
     return Ok(Response::with(status::Ok));
 }
 
 fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar))
                   -> IronResult<Response> {
+    println!("handle_comment started       : {}", time::precise_time_ns());
     let &(ref list, ref cvar) = queue;
     let ref mut body = req.body;
     let mut s: String = String::new();
@@ -250,6 +256,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
         }
     }
 
+    println!("handle_comment finished      : {}", time::precise_time_ns());
     return Ok(Response::with(status::Ok));
 }
 
@@ -349,11 +356,8 @@ mod jenkins {
     use ::serde_json;
     use std::time::Duration;
     use ::std;
-    use ::hyper::header::{ContentType};
-    use ::hyper::mime::{Mime, TopLevel, SubLevel};
     use ::iron::*;
-    use ::hyper::Client;
-
+    
     pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str) -> String {
         let output = Command::new("wget")
             .arg("-S").arg("-O-")
@@ -421,8 +425,7 @@ mod jenkins {
         arg
     }
 
-    pub fn poll_build(user: &str, password: &str, build_url: &str, private_token: &str,
-                      gitlab_api_root: &str, target_project_id: u64, mr_id: u64) -> String {
+    pub fn poll_build(user: &str, password: &str, build_url: &str) -> String {
         let result_string;
         loop {
             let output = Command::new("wget")
@@ -454,21 +457,6 @@ mod jenkins {
                     result_string = result.as_string().unwrap().to_owned();
                     println!("Parsed response, result_string == {}", result_string);
 
-                    let client = Client::new();
-                    let mut headers = Headers::new();
-                    headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
-                    headers.set_raw("PRIVATE-TOKEN", vec![private_token.to_owned().into_bytes()]);
-
-                    println!("headers == {:?}", headers);
-
-                    let message = &*format!("{{ \"note\": \"build status: {}, url: {}\"}}", result_string, build_url);
-
-                    let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", gitlab_api_root, target_project_id, mr_id))
-                        .headers(headers)
-                        .body(message)
-                        .send()
-                        .unwrap();
-                    assert_eq!(res.status, ::hyper::status::StatusCode::Created);
                     break;
                 }
             }
@@ -483,6 +471,7 @@ mod jenkins {
 
 fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), config: Table) -> !
 {
+    println!("handle_build_request started : {}", time::precise_time_ns());
     let gitlab_user = config.get("user").unwrap().as_str().unwrap();
     let gitlab_password = config.get("password").unwrap().as_str().unwrap();
     let gitlab_api_root = config.get("url").unwrap().as_str().unwrap();
@@ -503,6 +492,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
     println!("Logged in to GitLab, private_token == {}", private_token);
 
     loop {
+        println!("handle_build_request iterated: {}", time::precise_time_ns());
         let arg;
         let target_project_id;
         let mr_id;
@@ -545,7 +535,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 
         let build_url = jenkins::poll_queue(http_user, http_password, &queue_url);
 
-        let result_string = jenkins::poll_build(http_user, http_password, &build_url, private_token, gitlab_api_root, target_project_id, mr_id);
+        let result_string = jenkins::poll_build(http_user, http_password, &build_url);
 
         println!("{}", result_string);
         if result_string == "SUCCESS" {
@@ -589,8 +579,27 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             list.push_back(request);
         }
         println!("{:?}", &*list);
+
+        let client = Client::new();
+        let mut headers = Headers::new();
+        headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
+        headers.set_raw("PRIVATE-TOKEN", vec![private_token.to_owned().into_bytes()]);
+
+        println!("headers == {:?}", headers);
+
+        let message = &*format!("{{ \"note\": \"build status: {}, url: {}\"}}", result_string, build_url);
+
+        let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", gitlab_api_root, target_project_id, mr_id))
+            .headers(headers)
+            .body(message)
+            .send()
+            .unwrap();
+        assert_eq!(res.status, ::hyper::status::StatusCode::Created);
+
         drop(list);
+        println!("handle_build_request finished: {}", time::precise_time_ns());
     }
+    println!("At: {}", time::precise_time_ns());
 }
 
 fn main() {
