@@ -363,8 +363,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let mut request = list.pop_front().unwrap();
         println!("Got the request: {:?}", request);
         let arg = request.checkout_sha.clone();
-        let target_project_id = request.id.target_project_id;
-        let mr_id = request.id.id;
+        let mr_id = request.id;
         let mr_human_number = request.human_number;
         let request_status = request.status;
         println!("{:?}", request.status);
@@ -372,6 +371,10 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             continue;
         }
         drop(list);
+
+        let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
+
+        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
         git::fetch();
         git::checkout("try");
@@ -395,10 +398,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         if result_string == "SUCCESS" {
             let &(ref mutex, _) = queue;
             let list = &mut *mutex.lock().unwrap();
-            if let Some(new_request) =
-                find_mr_mut(
-                    list,
-                    MrUid { target_project_id: target_project_id, id: mr_id })
+            if let Some(new_request) = find_mr_mut(list, mr_id)
             {
                 if new_request.checkout_sha == request.checkout_sha {
                     if new_request.approval_status != ApprovalStatus::Approved {
@@ -428,10 +428,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let list = &mut *mutex.lock().unwrap();
         let mut need_push_back = false;
         {
-            if let Some(new_request) =
-                find_mr_mut(
-                    list,
-                    MrUid { target_project_id: target_project_id, id: mr_id })
+            if let Some(new_request) = find_mr_mut(list, mr_id)
             {
                 if new_request.checkout_sha != request.checkout_sha
                     || new_request.approval_status != request.approval_status
