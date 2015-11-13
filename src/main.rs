@@ -145,7 +145,8 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
     return Ok(Response::with(status::Ok));
 }
 
-fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar))
+fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
+                  config: &Table)
                   -> IronResult<Response> {
     println!("handle_comment started       : {}", time::precise_time_ns());
 
@@ -165,7 +166,11 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let obj = json.as_object().unwrap();
     let user = obj.get("user").unwrap().as_object().unwrap();
     let username = user.get("username").unwrap().as_string().unwrap();
-    if username == "pankov" {
+
+    let reviewers = config.get("reviewers").unwrap().as_slice().unwrap();
+    let is_comment_author_reviewer = reviewers.iter().any(|s| s.as_str().unwrap() == username);
+
+    if is_comment_author_reviewer {
         let &(ref list, ref cvar) = queue;
 
         let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap().to_owned();
@@ -504,7 +509,7 @@ mod jenkins {
     }
 }
 
-fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), config: Table) -> !
+fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), config: &Table) -> !
 {
     println!("handle_build_request started : {}", time::precise_time_ns());
     let gitlab_user = config.get("user").unwrap().as_str().unwrap();
@@ -673,7 +678,7 @@ fn main() {
     file.read_to_string(&mut toml).unwrap();
 
     let mut parser = toml::Parser::new(&toml);
-    let config = parser.parse().unwrap();
+    let config = Arc::new(parser.parse().unwrap());
 
     println!("Dry run: {}", matches.is_present("dry-run"));
     let gitlab_port =
@@ -686,9 +691,10 @@ fn main() {
     let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
     let queue2 = queue.clone();
     let queue3 = queue.clone();
+    let config2 = config.clone();
 
     let builder = thread::spawn(move || {
-        handle_build_request(&*queue, config);
+        handle_build_request(&*queue, &*config);
     });
 
     let mut router = router::Router::new();
@@ -697,7 +703,7 @@ fn main() {
                 handle_mr(req, &*queue2));
     router.post("/api/v1/comment",
                 move |req: &mut Request|
-                handle_comment(req, &*queue3));
+                handle_comment(req, &*queue3, &*config2));
     Iron::new(router).http(
         (gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
