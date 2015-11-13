@@ -81,26 +81,6 @@ fn find_mr_mut(list: &mut LinkedList<MergeRequest>, id: MrUid) -> Option<&mut Me
     None
 }
 
-struct MergeRequestBuilder {
-    id: MrUid,
-    human_number: u64,
-    checkout_sha: Option<String>,
-    status: Option<Status>,
-    approval_status: Option<Status>,
-}
-
-impl MergeRequestBuilder {
-    fn new(id: MrUid, human_number: u64) -> MergeRequestBuilder {
-        MergeRequestBuilder {
-            id: id,
-            human_number: human_number,
-            checkout_sha: None,
-            status: None,
-            approval_status: None
-        }
-    }
-}
-
 fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
                        id: MrUid,
                        human_number: u64,
