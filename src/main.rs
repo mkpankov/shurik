@@ -84,14 +84,14 @@ fn find_mr_mut(list: &mut LinkedList<MergeRequest>, id: MrUid) -> Option<&mut Me
 fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
                        id: MrUid,
                        human_number: u64,
-                       old_status: Status,
+                       old_statuses: &[Status],
                        new_checkout_sha: Option<&str>,
                        new_status: Option<Status>,
                        new_approval_status: Option<ApprovalStatus>,) {
     if let Some(mut existing_mr) =
         find_mr_mut(&mut *list, id)
     {
-        if existing_mr.status == old_status {
+        if old_statuses.iter().any(|x| *x == existing_mr.status) {
             if let Some(new_status) = new_status {
                 existing_mr.status = new_status;
             }
@@ -237,7 +237,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                         &mut *list,
                         MrUid { target_project_id: target_project_id, id: mr_id },
                         mr_human_number,
-                        Status::Open(SubStatusOpen::WaitingForReview),
+                        &[Status::Open(SubStatusOpen::WaitingForReview)][..],
                         Some(&last_commit_id),
                         Some(Status::Open(SubStatusOpen::WaitingForCi)),
                         Some(ApprovalStatus::Approved),
@@ -246,38 +246,18 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     println!("Notified...");
                 },
                 "r-" => {
-                    let mut found_existing = false;
                     let mut list = list.lock().unwrap();
-                    if let Some(mut existing_mr) =
-                        find_mr_mut(
-                            &mut *list,
-                            MrUid { target_project_id: target_project_id, id: mr_id })
-                    {
-                        found_existing = true;
-                        if existing_mr.status == Status::Open(SubStatusOpen::WaitingForCi)
-                            || existing_mr.status == Status::Open(SubStatusOpen::WaitingForMerge)
-                        {
-                            existing_mr.status = Status::Open(SubStatusOpen::WaitingForReview);
-                            existing_mr.approval_status = ApprovalStatus::Rejected;
-                            existing_mr.checkout_sha = last_commit_id.to_owned();
-                            println!("Updated existing MR");
-                            cvar.notify_one();
-                            println!("Notified...");
-                        }
-                    }
-                    if ! found_existing {
-                        let incoming = MergeRequest {
-                            id: MrUid { target_project_id: target_project_id, id: mr_id },
-                            checkout_sha: last_commit_id.to_owned(),
-                            status: Status::Open(SubStatusOpen::WaitingForReview),
-                            human_number: mr_human_number,
-                            approval_status: ApprovalStatus::Rejected,
-                        };
-                        list.push_back(incoming);
-                        println!("Queued up...");
-                        cvar.notify_one();
-                        println!("Notified...");
-                    }
+                    update_or_create_mr(
+                        &mut *list,
+                        MrUid { target_project_id: target_project_id, id: mr_id },
+                        mr_human_number,
+                        &[
+                            Status::Open(SubStatusOpen::WaitingForCi),
+                            Status::Open(SubStatusOpen::WaitingForMerge)][..],
+                        Some(&last_commit_id),
+                        Some(Status::Open(SubStatusOpen::WaitingForReview)),
+                        Some(ApprovalStatus::Rejected),
+                        );
                 },
                 "try" => {
                     let mut found_existing = false;
