@@ -15,7 +15,7 @@ pub fn post_comment(api_root: &str,
     headers.set_raw("PRIVATE-TOKEN", vec![private_token.to_owned().into_bytes()]);
 
     println!("headers == {:?}", headers);
-    let MrUid { target_project_id: target_project_id, id: id } = mr_id;
+    let MrUid { target_project_id, id } = mr_id;
 
     let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", api_root, target_project_id, id))
         .headers(headers)
