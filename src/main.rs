@@ -165,7 +165,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
             return Ok(Response::with(status::Ok));
         }
         let incoming = MergeRequest {
-            id: MrUid { target_project_id: target_project_id, id: mr_id.to_owned() },
+            id: MrUid { target_project_id: target_project_id, id: mr_id },
             checkout_sha: checkout_sha.to_owned(),
             status: new_status,
             human_number: mr_human_number,
@@ -247,7 +247,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     }
                     if ! found_existing {
                         let incoming = MergeRequest {
-                            id: MrUid { target_project_id: target_project_id, id: mr_id.to_owned(),},
+                            id: MrUid { target_project_id: target_project_id, id: mr_id,},
                             checkout_sha: last_commit_id.to_owned(),
                             status: Status::Open(SubStatusOpen::WaitingForCi),
                             human_number: mr_human_number,
@@ -281,8 +281,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     }
                     if ! found_existing {
                         let incoming = MergeRequest {
-                            id: MrUid { target_project_id: target_project_id, id: mr_id.to_owned(),
-},
+                            id: MrUid { target_project_id: target_project_id, id: mr_id },
                             checkout_sha: last_commit_id.to_owned(),
                             status: Status::Open(SubStatusOpen::WaitingForReview),
                             human_number: mr_human_number,
@@ -311,8 +310,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     }
                     if ! found_existing {
                         let incoming = MergeRequest {
-                            id: MrUid { target_project_id: target_project_id, id: mr_id.to_owned()
-},
+                            id: MrUid { target_project_id: target_project_id, id: mr_id },
                             checkout_sha: last_commit_id.to_owned(),
                             status: Status::Open(SubStatusOpen::WaitingForCi),
                             human_number: mr_human_number,
@@ -568,11 +566,6 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 
     loop {
         println!("handle_build_request iterated: {}", time::precise_time_ns());
-        let arg;
-        let target_project_id;
-        let mr_id;
-        let mr_human_number;
-        let request_status;
 
         let &(ref mutex, ref cvar) = queue;
         println!("Waiting to get the request...");
@@ -583,11 +576,11 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         println!("{:?}", &*list);
         let mut request = list.pop_front().unwrap();
         println!("Got the request: {:?}", request);
-        arg = request.checkout_sha.clone();
-        target_project_id = request.id.target_project_id;
-        mr_id = request.id.id;
-        mr_human_number = request.human_number;
-        request_status = request.status;
+        let arg = request.checkout_sha.clone();
+        let target_project_id = request.id.target_project_id;
+        let mr_id = request.id.id;
+        let mr_human_number = request.human_number;
+        let request_status = request.status;
         println!("{:?}", request.status);
         if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
             continue;
