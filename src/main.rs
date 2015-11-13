@@ -275,7 +275,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
         let mention_len = mention.len();
         if &note[0..mention_len] == mention {
             match &note[mention_len..] {
-                "r+" => {
+                "r+" | "одобряю" => {
                     let mut list = list.lock().unwrap();
                     update_or_create_mr(
                         &mut *list,
@@ -289,7 +289,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     cvar.notify_one();
                     println!("Notified...");
                 },
-                "r-" => {
+                "r-" | "отказываю" => {
                     let mut list = list.lock().unwrap();
                     update_or_create_mr(
                         &mut *list,
@@ -303,7 +303,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                         Some(ApprovalStatus::Rejected),
                         );
                 },
-                "try" => {
+                "try" | "попробуй" => {
                     let mut list = list.lock().unwrap();
                     update_or_create_mr(
                         &mut *list,
