@@ -230,7 +230,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
 }
 
 fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
-                  config: &Table)
+                  config: &toml::Value)
                   -> IronResult<Response> {
     println!("handle_comment started       : {}", time::precise_time_ns());
 
@@ -251,7 +251,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let user = obj.get("user").unwrap().as_object().unwrap();
     let username = user.get("username").unwrap().as_string().unwrap();
 
-    let reviewers = config.get("reviewers").unwrap().as_slice().unwrap();
+    let reviewers = config.lookup("reviewers").unwrap().as_slice().unwrap();
     let is_comment_author_reviewer = reviewers.iter().any(|s| s.as_str().unwrap() == username);
 
     if is_comment_author_reviewer {
@@ -330,12 +330,12 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     return Ok(Response::with(status::Ok));
 }
 
-fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), config: &Table) -> !
+fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), config: &toml::Value) -> !
 {
     println!("handle_build_request started : {}", time::precise_time_ns());
-    let gitlab_user = config.get("user").unwrap().as_str().unwrap();
-    let gitlab_password = config.get("password").unwrap().as_str().unwrap();
-    let gitlab_api_root = config.get("url").unwrap().as_str().unwrap();
+    let gitlab_user = config.lookup("user").unwrap().as_str().unwrap();
+    let gitlab_password = config.lookup("password").unwrap().as_str().unwrap();
+    let gitlab_api_root = config.lookup("url").unwrap().as_str().unwrap();
 
     let client = Client::new();
 
@@ -380,10 +380,10 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         git::reset_hard(&arg);
         git::push(true);
 
-        let http_user = config.get("http-user").unwrap().as_str().unwrap();
-        let http_password = config.get("http-password").unwrap().as_str().unwrap();
-        let token = config.get("token").unwrap().as_str().unwrap();
-        let jenkins_job_url = config.get("jenkins-job-url").unwrap().as_str().unwrap();
+        let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
+        let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
+        let token = config.lookup("jenkins.token").unwrap().as_str().unwrap();
+        let jenkins_job_url = config.lookup("jenkins.job-url").unwrap().as_str().unwrap();
         println!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
 
         let queue_url = jenkins::enqueue_build(http_user, http_password, jenkins_job_url, token);
@@ -494,7 +494,8 @@ fn main() {
     file.read_to_string(&mut toml).unwrap();
 
     let mut parser = toml::Parser::new(&toml);
-    let config = Arc::new(parser.parse().unwrap());
+    let value: toml::Value = toml::Value::Table(parser.parse().unwrap());
+    let config: Arc<toml::Value> = Arc::new(value);
 
     println!("Dry run: {}", matches.is_present("dry-run"));
     let gitlab_port =
