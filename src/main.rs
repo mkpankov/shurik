@@ -505,9 +505,9 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let mr_human_number;
         let request_status;
 
-        let &(ref list, ref cvar) = queue;
+        let &(ref mutex, ref cvar) = queue;
         println!("Waiting to get the request...");
-        let mut list = list.lock().unwrap();
+        let mut list = mutex.lock().unwrap();
         while list.is_empty() {
             list = cvar.wait(list).unwrap();
         }
@@ -557,8 +557,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 continue;
             }
         }
-        let &(ref list, _) = queue;
-        let list = &mut *list.lock().unwrap();
+        let &(ref mutex, _) = queue;
+        let list = &mut *mutex.lock().unwrap();
         let mut need_push_back = false;
         {
             if let Some(new_request) =
@@ -585,6 +585,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             list.push_back(request);
         }
         println!("{:?}", &*list);
+        drop(list);
     }
 }
 
