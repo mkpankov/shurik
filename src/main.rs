@@ -21,8 +21,6 @@ mod git;
 mod jenkins;
 mod gitlab;
 
-const B: &'static str = "BREAK ME ONCE ONLY";
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SubStatusOpen {
     WaitingForReview,
