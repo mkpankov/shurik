@@ -84,8 +84,8 @@ pub fn push(do_force: bool) {
 
 pub fn merge(mr_human_number: u64) -> Result<(), String> {
     let status = Command::new("git")
-        .arg("merge").arg("try")
-        .arg(&*format!("-m \"Merging MR #{}\"", mr_human_number))
+        .arg("merge").arg("try").arg("--no-ff")
+        .arg(&*format!("-m \"Merging MR !{}\"", mr_human_number))
         .current_dir("workspace/shurik")
         .status()
         .unwrap_or_else(|e| {
