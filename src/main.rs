@@ -226,7 +226,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
 
     let merge_status_string = json.lookup("merge_request.merge_status").unwrap().as_string().unwrap();
     let merge_status = match merge_status_string {
-        "can_be_merged" => MergeStatus::CanBeMerged,
+        "can_be_merged" | "unchecked" => MergeStatus::CanBeMerged,
         _ => MergeStatus::CanNotBeMerged,
     };
 
@@ -304,7 +304,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
         };
         let merge_status_string = json.lookup("merge_request.merge_status").unwrap().as_string().unwrap();
         let merge_status = match merge_status_string {
-            "can_be_merged" => MergeStatus::CanBeMerged,
+            "can_be_merged" | "unchecked" => MergeStatus::CanBeMerged,
             _ => MergeStatus::CanNotBeMerged,
         };
 
