@@ -547,7 +547,6 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         drop(list);
         println!("handle_build_request finished: {}", time::precise_time_ns());
     }
-    println!("At: {}", time::precise_time_ns());
 }
 
 fn main() {
