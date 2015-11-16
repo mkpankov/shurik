@@ -88,7 +88,7 @@ pub fn merge(mr_human_number: u64) -> Result<(), String> {
 
 pub fn rebase(to: &str) -> Result<(), String> {
     let status = Command::new("git")
-        .arg("rebase").arg("--keep-empty").arg(to)
+        .arg("rebase").arg(to)
         .current_dir("workspace/shurik")
         .status()
         .unwrap_or_else(|e| {
