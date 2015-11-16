@@ -21,7 +21,7 @@ mod git;
 mod jenkins;
 mod gitlab;
 
-const b: &'static str = "BREAK ME AGAIN;
+const b: &'static str = "BREAK ME ONCE ONLY";
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SubStatusOpen {
@@ -437,7 +437,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         git::reset_hard("origin/master");
         git::checkout("try");
         git::reset_hard(&arg);
-        match git::rebase("master") {
+        match git::merge("master", mr_human_number) {
             Ok(_) => {},
             Err(_) => {
                 let message = &*format!("{{ \"note\": \":umbrella: не удалось сделать rebase MR на master. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -489,7 +489,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                 request.status = Status::Open(SubStatusOpen::WaitingForMerge);
                 git::checkout("master");
-                match git::merge(mr_human_number) {
+                match git::merge("try", mr_human_number) {
                     Ok(_) => {},
                     Err(_) => {
                         let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
