@@ -55,6 +55,7 @@ pub fn push(do_force: bool) {
 
     let status = Command::new("ssh-agent")
         .arg("sh").arg("-c").arg(git_push_command)
+        .current_dir("workspace/shurik")
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
