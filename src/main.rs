@@ -495,6 +495,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                         continue;
                     },
                 }
+                git::status();
                 git::push(false);
                 request.status = Status::Merged;
                 println!("Updated existing MR");

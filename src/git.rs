@@ -46,6 +46,21 @@ pub fn reset_hard(to: &str) {
     }
 }
 
+pub fn status() {
+    let status = Command::new("git")
+        .arg("status")
+        .current_dir("workspace/shurik")
+        .status()
+        .unwrap_or_else(|e| {
+            panic!("failed to execute process: {}", e)
+        });
+    if ExitStatus::success(&status) {
+        println!("Queried status");
+    } else {
+        panic!("Couldn't query the git status: {}", status)
+    }
+}
+
 pub fn push(do_force: bool) {
     let git_push_command = if do_force {
         "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push -u --force-with-lease"
