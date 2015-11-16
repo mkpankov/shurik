@@ -21,7 +21,7 @@ mod git;
 mod jenkins;
 mod gitlab;
 
-const b: &'static str = "BREAK ME ONCE ONLY";
+const B: &'static str = "BREAK ME ONCE ONLY";
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SubStatusOpen {
