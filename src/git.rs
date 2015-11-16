@@ -86,7 +86,7 @@ pub fn merge(mr_human_number: u64) -> Result<(), String> {
     }
 }
 
-pub fn rebase(to: &str) {
+pub fn rebase(to: &str) -> Result<(), String> {
     let status = Command::new("git")
         .arg("rebase").arg(to)
         .current_dir("workspace/shurik")
@@ -96,7 +96,8 @@ pub fn rebase(to: &str) {
         });
     if ExitStatus::success(&status) {
         println!("Rebase MR to 'master'");
+        Ok(())
     } else {
-        panic!("Couldn't rebase MR to 'master': {}", status)
+        Err(format!("Couldn't rebase MR to 'master': {}", status))
     }
 }

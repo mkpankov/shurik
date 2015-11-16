@@ -419,7 +419,13 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         git::fetch();
         git::checkout("try");
         git::reset_hard(&arg);
-        git::rebase("master");
+        match git::rebase("master") {
+            Ok(_) => {},
+            Err(_) => {
+                let message = &*format!("{{ \"note\": \":umbrella: не удалось сделать rebase MR на master. Пожалуйста, обновите его (rebase или merge)\"}}");
+                gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            }
+        }
         git::push(true);
 
         let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
