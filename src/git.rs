@@ -48,9 +48,9 @@ pub fn reset_hard(to: &str) {
 
 pub fn push(do_force: bool) {
     let git_push_command = if do_force {
-        "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push --force-with-lease"
+        "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push -u --force-with-lease"
     } else {
-        "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push"
+        "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push -u"
     };
 
     let status = Command::new("ssh-agent")
