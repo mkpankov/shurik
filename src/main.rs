@@ -440,7 +440,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         match git::merge("master", mr_human_number) {
             Ok(_) => {},
             Err(_) => {
-                let message = &*format!("{{ \"note\": \":umbrella: не удалось сделать rebase MR на master. Пожалуйста, обновите его (rebase или merge)\"}}");
+                let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                 continue;
             }
