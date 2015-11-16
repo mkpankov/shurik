@@ -52,7 +52,7 @@ pub fn push(do_force: bool) {
         "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push"
     };
 
-    let status = Command::new("ssh")
+    let status = Command::new("ssh-agent")
         .arg("sh").arg("-c").arg(git_push_command)
         .status()
         .unwrap_or_else(|e| {
