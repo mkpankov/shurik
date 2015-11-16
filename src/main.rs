@@ -224,7 +224,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
         _ => panic!("Unexpected MR action: {}", action),
     };
 
-    let merge_status_string = json.lookup("merge_request.merge_status").unwrap().as_string().unwrap();
+    let merge_status_string = json.lookup("object_attributes.merge_status").unwrap().as_string().unwrap();
     let merge_status = match merge_status_string {
         "can_be_merged" | "unchecked" => MergeStatus::CanBeMerged,
         _ => MergeStatus::CanNotBeMerged,
