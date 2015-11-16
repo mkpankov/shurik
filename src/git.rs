@@ -69,9 +69,9 @@ pub fn push(do_force: bool) {
     }
 }
 
-pub fn merge_ff(mr_human_number: u64) {
+pub fn merge(mr_human_number: u64) -> Result<(), String> {
     let status = Command::new("git")
-        .arg("merge").arg("try").arg("--ff-only")
+        .arg("merge").arg("try")
         .arg(&*format!("-m \"Merging MR #{}\"", mr_human_number))
         .current_dir("workspace/shurik")
         .status()
@@ -80,7 +80,24 @@ pub fn merge_ff(mr_human_number: u64) {
         });
     if ExitStatus::success(&status) {
         println!("Merge master to MR {}", mr_human_number);
+        Ok(())
     } else {
-        panic!("Couldn't merge the 'master' branch: {}", status)
+        Err(format!("Couldn't merge the 'master' branch: {}", status))
+    }
+}
+
+pub fn rebase(to: &str) -> Result<(), String> {
+    let status = Command::new("git")
+        .arg("rebase").arg(to)
+        .current_dir("workspace/shurik")
+        .status()
+        .unwrap_or_else(|e| {
+            panic!("failed to execute process: {}", e)
+        });
+    if ExitStatus::success(&status) {
+        println!("Rebase MR to 'master'");
+        Ok(())
+    } else {
+        Err(format!("Couldn't rebase MR to 'master': {}", status))
     }
 }

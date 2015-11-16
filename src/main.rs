@@ -419,6 +419,13 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         git::fetch();
         git::checkout("try");
         git::reset_hard(&arg);
+        match git::rebase("master") {
+            Ok(_) => {},
+            Err(_) => {
+                let message = &*format!("{{ \"note\": \":umbrella: не удалось сделать rebase MR на master. Пожалуйста, обновите его (rebase или merge)\"}}");
+                gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            }
+        }
         git::push(true);
 
         let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
@@ -463,7 +470,14 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                 request.status = Status::Open(SubStatusOpen::WaitingForMerge);
                 git::checkout("master");
-                git::merge_ff(mr_human_number);
+                match git::merge(mr_human_number) {
+                    Ok(_) => {},
+                    Err(_) => {
+                        let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
+                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                        continue;
+                    },
+                }
                 git::push(false);
                 request.status = Status::Merged;
                 println!("Updated existing MR");
