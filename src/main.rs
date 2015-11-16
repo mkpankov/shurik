@@ -21,7 +21,7 @@ mod git;
 mod jenkins;
 mod gitlab;
 
-const b: &'static str = "BREAK ME ONCE MORE PLEASE";
+const b: &'static str = "BREAK ME ONCE ONLY";
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SubStatusOpen {
@@ -433,10 +433,12 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         git::set_remote_url(&ssh_url);
         git::set_user("Shurik", "shurik@example.com");
         git::fetch();
+        git::reset_hard(None);
+
         git::checkout("master");
-        git::reset_hard("origin/master");
+        git::reset_hard(Some("origin/master"));
         git::checkout("try");
-        git::reset_hard(&arg);
+        git::reset_hard(Some(&arg));
         match git::merge("master", mr_human_number) {
             Ok(_) => {},
             Err(_) => {
