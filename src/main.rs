@@ -419,6 +419,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         git::fetch();
         git::checkout("try");
         git::reset_hard(&arg);
+        git::rebase("master");
         git::push(true);
 
         let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();

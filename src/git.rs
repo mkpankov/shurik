@@ -84,3 +84,18 @@ pub fn merge_ff(mr_human_number: u64) {
         panic!("Couldn't merge the 'master' branch: {}", status)
     }
 }
+
+pub fn rebase(to: &str) {
+    let status = Command::new("git")
+        .arg("rebase").arg(to)
+        .current_dir("workspace/shurik")
+        .status()
+        .unwrap_or_else(|e| {
+            panic!("failed to execute process: {}", e)
+        });
+    if ExitStatus::success(&status) {
+        println!("Rebase MR to 'master'");
+    } else {
+        panic!("Couldn't rebase MR to 'master': {}", status)
+    }
+}
