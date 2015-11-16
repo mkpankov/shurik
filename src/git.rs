@@ -31,16 +31,19 @@ pub fn checkout(branch: &str) {
     }
 }
 
-pub fn reset_hard(to: &str) {
-    let status = Command::new("git")
-        .arg("reset").arg("--hard").arg(to)
-        .current_dir("workspace/shurik")
-        .status()
+pub fn reset_hard(to: Option<&str>) {
+    let mut command = Command::new("git");
+    let mut builder = command
+        .arg("reset").arg("--hard").current_dir("workspace/shurik");
+    if let Some(to) = to {
+        builder.arg(to);
+    }
+    let status = builder.status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Reset 'try' to {}", to);
+        println!("Reset 'try' to {}", to.unwrap_or("HEAD"));
     } else {
         panic!("Couldn't reset the 'try' branch: {}", status)
     }
@@ -99,6 +102,7 @@ pub fn merge(branch: &str, mr_human_number: u64) -> Result<(), String> {
     }
 }
 
+#[allow(unused)]
 pub fn rebase(to: &str) -> Result<(), String> {
     let status = Command::new("git")
         .arg("rebase").arg(to)
