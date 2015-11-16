@@ -46,18 +46,14 @@ pub fn reset_hard(to: &str) {
 }
 
 pub fn push(do_force: bool) {
-    let mut command = Command::new("git");
-    let builder = command
-        .arg("push");
+    let git_push_command = if do_force {
+        "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push --force-with-lease"
+    } else {
+        "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push"
+    };
 
-    if do_force {
-        builder.arg("--force-with-lease");
-    }
-
-    let builder = builder
-        .current_dir("workspace/shurik");
-
-    let status = builder
+    let status = Command::new("ssh")
+        .arg("sh").arg("-c").arg(git_push_command)
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
