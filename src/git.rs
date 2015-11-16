@@ -101,3 +101,18 @@ pub fn rebase(to: &str) -> Result<(), String> {
         Err(format!("Couldn't rebase MR to 'master': {}", status))
     }
 }
+
+pub fn set_remote_url(url: &str) {
+    let status = Command::new("git")
+        .arg("remote").arg("set-url").arg("origin").arg(url)
+        .current_dir("workspace/shurik")
+        .status()
+        .unwrap_or_else(|e| {
+            panic!("failed to execute process: {}", e)
+        });
+    if ExitStatus::success(&status) {
+        println!("Set remote 'origin' URL to {}", url);
+    } else {
+        panic!("Couldn't set remote 'origin' URL: {}", status)
+    }
+}

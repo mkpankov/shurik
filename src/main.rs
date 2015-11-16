@@ -52,6 +52,7 @@ enum MergeStatus {
 struct MergeRequest {
     id: MrUid,
     human_number: u64,
+    ssh_url: String,
     checkout_sha: String,
     status: Status,
     approval_status: ApprovalStatus,
@@ -91,6 +92,7 @@ fn find_mr_mut(list: &mut LinkedList<MergeRequest>, id: MrUid) -> Option<&mut Me
 
 struct MergeRequestBuilder {
     id: MrUid,
+    ssh_url: String,
     human_number: u64,
     checkout_sha: Option<String>,
     status: Option<Status>,
@@ -99,9 +101,10 @@ struct MergeRequestBuilder {
 }
 
 impl MergeRequestBuilder {
-    fn new(id: MrUid, human_number: u64) -> Self {
+    fn new(id: MrUid, ssh_url: String, human_number: u64) -> Self {
         MergeRequestBuilder {
             id: id,
+            ssh_url: ssh_url,
             human_number: human_number,
             checkout_sha: None,
             status: None,
@@ -129,6 +132,7 @@ impl MergeRequestBuilder {
         if let (Some(checkout_sha), Some(status), Some(approval_status), Some(merge_status)) = (self.checkout_sha, self.status, self.approval_status, self.merge_status) {
             Ok(MergeRequest {
                 id: self.id,
+                ssh_url: self.ssh_url,
                 human_number: self.human_number,
                 checkout_sha: checkout_sha,
                 status: status,
@@ -143,6 +147,7 @@ impl MergeRequestBuilder {
 
 fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
                        id: MrUid,
+                       ssh_url: &str,
                        human_number: u64,
                        old_statuses: &[Status],
                        new_checkout_sha: Option<&str>,
@@ -172,7 +177,7 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
         return;
     }
 
-    let incoming = MergeRequestBuilder::new(id, human_number)
+    let incoming = MergeRequestBuilder::new(id, ssh_url.to_owned(), human_number)
         .with_checkout_sha(new_checkout_sha.unwrap())
         .with_status(new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)))
         .with_approval_status(new_approval_status.unwrap())
@@ -210,6 +215,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
     let mr_human_number = attrs.get("iid").unwrap().as_u64().unwrap();
     let mr_id = attrs.get("id").unwrap().as_u64().unwrap();
     let action = json.lookup("object_attributes.action").unwrap().as_string().unwrap();
+    let ssh_url = json.lookup("object_attributes.target.ssh_url").unwrap().as_string().unwrap();
     let new_status = match action {
         "open" | "reopen" => Status::Open(SubStatusOpen::WaitingForReview),
         "close" => Status::Closed,
@@ -240,6 +246,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
         }
         let incoming = MergeRequest {
             id: MrUid { target_project_id: target_project_id, id: mr_id },
+            ssh_url: ssh_url.to_owned(),
             checkout_sha: checkout_sha.to_owned(),
             status: new_status,
             human_number: mr_human_number,
@@ -287,6 +294,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
         let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
         let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
         let state = json.lookup("merge_request.state").unwrap().as_string().unwrap();
+        let ssh_url = json.lookup("merge_request.target.ssh_url").unwrap().as_string().unwrap();
         // This is unused as we only handle comments that are issued by reviewer
         let new_status = match state {
             "opened" | "reopened" | "updated" => Status::Open(SubStatusOpen::WaitingForReview),
@@ -312,6 +320,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     update_or_create_mr(
                         &mut *list,
                         MrUid { target_project_id: target_project_id, id: mr_id },
+                        ssh_url,
                         mr_human_number,
                         &[Status::Open(SubStatusOpen::WaitingForReview)][..],
                         Some(&last_commit_id),
@@ -327,6 +336,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     update_or_create_mr(
                         &mut *list,
                         MrUid { target_project_id: target_project_id, id: mr_id },
+                        ssh_url,
                         mr_human_number,
                         &[
                             Status::Open(SubStatusOpen::WaitingForCi),
@@ -342,6 +352,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     update_or_create_mr(
                         &mut *list,
                         MrUid { target_project_id: target_project_id, id: mr_id },
+                        ssh_url,
                         mr_human_number,
                         &[],
                         Some(&last_commit_id),
@@ -402,6 +413,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let mr_human_number = request.human_number;
         let request_status = request.status;
         let merge_status = request.merge_status;
+        let ssh_url = request.ssh_url.clone();
         println!("{:?}", request.status);
         if merge_status != MergeStatus::CanBeMerged {
             let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -416,6 +428,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
+        git::set_remote_url(&ssh_url);
         git::fetch();
         git::checkout("try");
         git::reset_hard(&arg);
