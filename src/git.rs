@@ -1,8 +1,9 @@
 use ::std::process::{Command, ExitStatus};
 
 pub fn fetch() {
-    let status = Command::new("git")
-        .arg("fetch")
+    let git_fetch_command = "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git fetch";
+    let status = Command::new("ssh-agent")
+        .arg("sh").arg("-c").arg(git_fetch_command)
         .current_dir("workspace/shurik")
         .status()
         .unwrap_or_else(|e| {
