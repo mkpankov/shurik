@@ -88,7 +88,7 @@ pub fn merge(mr_human_number: u64) -> Result<(), String> {
 
 pub fn rebase(to: &str) -> Result<(), String> {
     let status = Command::new("git")
-        .arg("rebase").arg(to)
+        .arg("rebase").arg("--keep-empty").arg(to)
         .current_dir("workspace/shurik")
         .status()
         .unwrap_or_else(|e| {
@@ -114,5 +114,32 @@ pub fn set_remote_url(url: &str) {
         println!("Set remote 'origin' URL to {}", url);
     } else {
         panic!("Couldn't set remote 'origin' URL: {}", status)
+    }
+}
+
+pub fn set_user(name: &str, email: &str) {
+    let status = Command::new("git")
+        .arg("config").arg("user.name").arg(name)
+        .current_dir("workspace/shurik")
+        .status()
+        .unwrap_or_else(|e| {
+            panic!("failed to execute process: {}", e)
+        });
+    if ExitStatus::success(&status) {
+        println!("Set user name to {}", name);
+    } else {
+        panic!("Couldn't set user name: {}", status)
+    }
+    let status = Command::new("git")
+        .arg("config").arg("user.email").arg(email)
+        .current_dir("workspace/shurik")
+        .status()
+        .unwrap_or_else(|e| {
+            panic!("failed to execute process: {}", e)
+        });
+    if ExitStatus::success(&status) {
+        println!("Set user email to {}", email);
+    } else {
+        panic!("Couldn't set user email: {}", status)
     }
 }

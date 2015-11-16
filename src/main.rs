@@ -429,6 +429,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
         git::set_remote_url(&ssh_url);
+        git::set_user("Shurik", "shurik@example.com");
         git::fetch();
         git::checkout("try");
         git::reset_hard(&arg);
