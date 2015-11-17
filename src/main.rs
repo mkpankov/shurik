@@ -21,8 +21,6 @@ mod git;
 mod jenkins;
 mod gitlab;
 
-const RETURN_OF_CONFLICT_MAKER: usize = 44;
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SubStatusOpen {
     WaitingForReview,
@@ -295,20 +293,8 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
         let target_project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
         let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
         let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
-        let state = json.lookup("merge_request.state").unwrap().as_string().unwrap();
         let ssh_url = json.lookup("merge_request.target.ssh_url").unwrap().as_string().unwrap();
         // This is unused as we only handle comments that are issued by reviewer
-        let new_status = match state {
-            "opened" | "reopened" | "updated" => Status::Open(SubStatusOpen::WaitingForReview),
-            "closed" => Status::Closed,
-            "merged" => Status::Merged,
-            _ => panic!("Unexpected MR state: {}", state),
-        };
-        let merge_status_string = json.lookup("merge_request.merge_status").unwrap().as_string().unwrap();
-        let merge_status = match merge_status_string {
-            "can_be_merged" | "unchecked" => MergeStatus::CanBeMerged,
-            _ => MergeStatus::CanNotBeMerged,
-        };
 
         let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
         let note = attrs.get("note").unwrap().as_string().unwrap();
