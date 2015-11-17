@@ -315,57 +315,60 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 
         let mention = "@shurik ";
         let mention_len = mention.len();
-        if &note[0..mention_len] == mention {
-            match &note[mention_len..] {
-                "r+" | "одобряю" => {
-                    let mut list = list.lock().unwrap();
-                    update_or_create_mr(
-                        &mut *list,
-                        MrUid { target_project_id: target_project_id, id: mr_id },
-                        ssh_url,
-                        mr_human_number,
-                        &[Status::Open(SubStatusOpen::WaitingForReview)][..],
-                        Some(&last_commit_id),
-                        Some(Status::Open(SubStatusOpen::WaitingForCi)),
-                        Some(ApprovalStatus::Approved),
-                        None,
-                        );
-                    cvar.notify_one();
-                    println!("Notified...");
-                },
-                "r-" | "отказываю" => {
-                    let mut list = list.lock().unwrap();
-                    update_or_create_mr(
-                        &mut *list,
-                        MrUid { target_project_id: target_project_id, id: mr_id },
-                        ssh_url,
-                        mr_human_number,
-                        &[
-                            Status::Open(SubStatusOpen::WaitingForCi),
-                            Status::Open(SubStatusOpen::WaitingForMerge)][..],
-                        Some(&last_commit_id),
-                        Some(Status::Open(SubStatusOpen::WaitingForReview)),
-                        Some(ApprovalStatus::Rejected),
-                        None,
-                        );
-                },
-                "try" | "попробуй" => {
-                    let mut list = list.lock().unwrap();
-                    update_or_create_mr(
-                        &mut *list,
-                        MrUid { target_project_id: target_project_id, id: mr_id },
-                        ssh_url,
-                        mr_human_number,
-                        &[],
-                        Some(&last_commit_id),
-                        Some(Status::Open(SubStatusOpen::WaitingForCi)),
-                        None,
-                        None,
-                        );
-                    cvar.notify_one();
-                    println!("Notified...");
+        // FIXME: thread '<unnamed>' panicked at 'index 0 and/or 8 in `.` do not lie on character boundary'
+        if note.len() >= mention.len() {
+            if &note[0..mention_len] == mention {
+                match &note[mention_len..] {
+                    "r+" | "одобряю" => {
+                        let mut list = list.lock().unwrap();
+                        update_or_create_mr(
+                            &mut *list,
+                            MrUid { target_project_id: target_project_id, id: mr_id },
+                            ssh_url,
+                            mr_human_number,
+                            &[Status::Open(SubStatusOpen::WaitingForReview)][..],
+                            Some(&last_commit_id),
+                            Some(Status::Open(SubStatusOpen::WaitingForCi)),
+                            Some(ApprovalStatus::Approved),
+                            None,
+                            );
+                        cvar.notify_one();
+                        println!("Notified...");
+                    },
+                    "r-" | "отказываю" => {
+                        let mut list = list.lock().unwrap();
+                        update_or_create_mr(
+                            &mut *list,
+                            MrUid { target_project_id: target_project_id, id: mr_id },
+                            ssh_url,
+                            mr_human_number,
+                            &[
+                                Status::Open(SubStatusOpen::WaitingForCi),
+                                Status::Open(SubStatusOpen::WaitingForMerge)][..],
+                            Some(&last_commit_id),
+                            Some(Status::Open(SubStatusOpen::WaitingForReview)),
+                            Some(ApprovalStatus::Rejected),
+                            None,
+                            );
+                    },
+                    "try" | "попробуй" => {
+                        let mut list = list.lock().unwrap();
+                        update_or_create_mr(
+                            &mut *list,
+                            MrUid { target_project_id: target_project_id, id: mr_id },
+                            ssh_url,
+                            mr_human_number,
+                            &[],
+                            Some(&last_commit_id),
+                            Some(Status::Open(SubStatusOpen::WaitingForCi)),
+                            None,
+                            None,
+                            );
+                        cvar.notify_one();
+                        println!("Notified...");
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     } else {
