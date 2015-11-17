@@ -509,8 +509,6 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 for mr in list_copy.iter() {
                     git::set_remote_url(&ssh_url);
                     git::set_user("Shurik", "shurik@example.com");
-                    git::fetch();
-
                     mr_try_merge_and_report_if_impossible(mr, gitlab_api_root, private_token);
                 }
                 continue;
@@ -582,6 +580,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     git::checkout("master");
     git::reset_hard(Some("origin/master"));
     git::checkout("try");
+    git::fetch();
     git::reset_hard(Some(&arg));
     match git::merge("master", mr_human_number, false) {
         Ok(_) => {},
