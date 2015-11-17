@@ -66,7 +66,7 @@ pub fn status() {
 
 pub fn push(do_force: bool) {
     let git_push_command = if do_force {
-        "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push -u --force-with-lease"
+        "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push -u --force"
     } else {
         "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push -u"
     };
