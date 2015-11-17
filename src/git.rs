@@ -43,9 +43,9 @@ pub fn reset_hard(to: Option<&str>) {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Reset 'try' to {}", to.unwrap_or("HEAD"));
+        println!("Reset current branch to {}", to.unwrap_or("HEAD"));
     } else {
-        panic!("Couldn't reset the 'try' branch: {}", status)
+        panic!("Couldn't reset current branch: {}", status)
     }
 }
 
