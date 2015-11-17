@@ -422,15 +422,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let mr_id = request.id;
         let mr_human_number = request.human_number;
         let request_status = request.status;
-        let merge_status = request.merge_status;
         let ssh_url = request.ssh_url.clone();
         println!("{:?}", request.status);
-        if merge_status != MergeStatus::CanBeMerged {
-            let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge)\"}}");
-            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-            continue;
-        }
-        mr_try_merge_and_report_if_impossible(&request, gitlab_api_root, private_token);
 
         if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
             continue;
