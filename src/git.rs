@@ -43,9 +43,9 @@ pub fn reset_hard(to: Option<&str>) {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Reset 'try' to {}", to.unwrap_or("HEAD"));
+        println!("Reset current branch to {}", to.unwrap_or("HEAD"));
     } else {
-        panic!("Couldn't reset the 'try' branch: {}", status)
+        panic!("Couldn't reset current branch: {}", status)
     }
 }
 
@@ -85,11 +85,16 @@ pub fn push(do_force: bool) {
     }
 }
 
-pub fn merge(branch: &str, mr_human_number: u64) -> Result<(), String> {
-    let status = Command::new("git")
-        .arg("merge").arg(branch).arg("--no-ff")
+pub fn merge(branch: &str, mr_human_number: u64, no_ff: bool) -> Result<(), String> {
+    let mut command = Command::new("git");
+    let mut builder = command
+        .arg("merge").arg(branch)
         .arg(&*format!("-m \"Merging MR !{}\"", mr_human_number))
-        .current_dir("workspace/shurik")
+        .current_dir("workspace/shurik");
+    if no_ff {
+        builder.arg("--no-ff");
+    }
+    let status = builder
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)

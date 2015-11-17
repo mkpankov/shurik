@@ -48,7 +48,7 @@ enum MergeStatus {
     CanNotBeMerged,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct MergeRequest {
     id: MrUid,
     human_number: u64,
@@ -437,7 +437,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         git::reset_hard(Some("origin/master"));
         git::checkout("try");
         git::reset_hard(Some(&arg));
-        match git::merge("master", mr_human_number) {
+        match git::merge("master", mr_human_number, false) {
             Ok(_) => {},
             Err(_) => {
                 let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -489,7 +489,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                 request.status = Status::Open(SubStatusOpen::WaitingForMerge);
                 git::checkout("master");
-                match git::merge("try", mr_human_number) {
+                match git::merge("try", mr_human_number, true) {
                     Ok(_) => {},
                     Err(_) => {
                         let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -503,8 +503,17 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 println!("Updated existing MR");
                 let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                let list_copy = list.clone();
+                drop(list);
+
+                for mr in list_copy.iter() {
+                    git::set_remote_url(&ssh_url);
+                    git::set_user("Shurik", "shurik@example.com");
+                    mr_try_merge_and_report_if_impossible(mr, gitlab_api_root, private_token);
+                }
                 continue;
             }
+            drop(list);
         }
         let &(ref mutex, _) = queue;
         let list = &mut *mutex.lock().unwrap();
@@ -548,6 +557,38 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 
         drop(list);
         println!("handle_build_request finished: {}", time::precise_time_ns());
+    }
+}
+
+fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
+                                         gitlab_api_root: &str,
+                                         private_token: &str)
+{
+    println!("Got the mr: {:?}", mr);
+    let arg = mr.checkout_sha.clone();
+    let mr_id = mr.id;
+    let mr_human_number = mr.human_number;
+    let merge_status = mr.merge_status;
+    println!("{:?}", mr.status);
+    if merge_status != MergeStatus::CanBeMerged {
+        let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge)\"}}");
+        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+        return;
+    }
+    git::reset_hard(None);
+
+    git::checkout("master");
+    git::reset_hard(Some("origin/master"));
+    git::checkout("try");
+    git::fetch();
+    git::reset_hard(Some(&arg));
+    match git::merge("master", mr_human_number, false) {
+        Ok(_) => {},
+        Err(_) => {
+            let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
+            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            return;
+        }
     }
 }
 
