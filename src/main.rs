@@ -183,7 +183,7 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
         .with_checkout_sha(new_checkout_sha.unwrap())
         .with_status(new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)))
         .with_approval_status(new_approval_status.unwrap())
-        .with_merge_status(new_merge_status.unwrap())
+        .with_merge_status(new_merge_status.unwrap_or(MergeStatus::CanBeMerged))
         .build()
         .unwrap();
 
