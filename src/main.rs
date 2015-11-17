@@ -437,7 +437,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         git::reset_hard(Some("origin/master"));
         git::checkout("try");
         git::reset_hard(Some(&arg));
-        match git::merge("master", mr_human_number) {
+        match git::merge("master", mr_human_number, false) {
             Ok(_) => {},
             Err(_) => {
                 let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -489,7 +489,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                 request.status = Status::Open(SubStatusOpen::WaitingForMerge);
                 git::checkout("master");
-                match git::merge("try", mr_human_number) {
+                match git::merge("try", mr_human_number, true) {
                     Ok(_) => {},
                     Err(_) => {
                         let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
