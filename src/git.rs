@@ -89,10 +89,12 @@ pub fn merge(branch: &str, mr_human_number: u64, no_ff: bool) -> Result<(), Stri
     let mut command = Command::new("git");
     let mut builder = command
         .arg("merge").arg(branch)
-        .arg(&*format!("-m \"Merging MR !{}\"", mr_human_number))
         .current_dir("workspace/shurik");
     if no_ff {
         builder.arg("--no-ff");
+        builder.arg(&*format!("-m \"Merging MR !{}\"", mr_human_number));
+    } else {
+        builder.arg(&*format!("-m \"Updating MR !{}\"", mr_human_number));
     }
     let status = builder
         .status()
