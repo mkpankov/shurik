@@ -315,57 +315,60 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 
         let mention = "@shurik ";
         let mention_len = mention.len();
-        if &note[0..mention_len] == mention {
-            match &note[mention_len..] {
-                "r+" | "одобряю" => {
-                    let mut list = list.lock().unwrap();
-                    update_or_create_mr(
-                        &mut *list,
-                        MrUid { target_project_id: target_project_id, id: mr_id },
-                        ssh_url,
-                        mr_human_number,
-                        &[Status::Open(SubStatusOpen::WaitingForReview)][..],
-                        Some(&last_commit_id),
-                        Some(Status::Open(SubStatusOpen::WaitingForCi)),
-                        Some(ApprovalStatus::Approved),
-                        Some(merge_status),
-                        );
-                    cvar.notify_one();
-                    println!("Notified...");
-                },
-                "r-" | "отказываю" => {
-                    let mut list = list.lock().unwrap();
-                    update_or_create_mr(
-                        &mut *list,
-                        MrUid { target_project_id: target_project_id, id: mr_id },
-                        ssh_url,
-                        mr_human_number,
-                        &[
-                            Status::Open(SubStatusOpen::WaitingForCi),
-                            Status::Open(SubStatusOpen::WaitingForMerge)][..],
-                        Some(&last_commit_id),
-                        Some(Status::Open(SubStatusOpen::WaitingForReview)),
-                        Some(ApprovalStatus::Rejected),
-                        Some(merge_status),
-                        );
-                },
-                "try" | "попробуй" => {
-                    let mut list = list.lock().unwrap();
-                    update_or_create_mr(
-                        &mut *list,
-                        MrUid { target_project_id: target_project_id, id: mr_id },
-                        ssh_url,
-                        mr_human_number,
-                        &[],
-                        Some(&last_commit_id),
-                        Some(Status::Open(SubStatusOpen::WaitingForCi)),
-                        None,
-                        Some(merge_status),
-                        );
-                    cvar.notify_one();
-                    println!("Notified...");
+        // FIXME: thread '<unnamed>' panicked at 'index 0 and/or 8 in `.` do not lie on character boundary'
+        if note.len() >= mention.len() {
+            if &note[0..mention_len] == mention {
+                match &note[mention_len..] {
+                    "r+" | "одобряю" => {
+                        let mut list = list.lock().unwrap();
+                        update_or_create_mr(
+                            &mut *list,
+                            MrUid { target_project_id: target_project_id, id: mr_id },
+                            ssh_url,
+                            mr_human_number,
+                            &[Status::Open(SubStatusOpen::WaitingForReview)][..],
+                            Some(&last_commit_id),
+                            Some(Status::Open(SubStatusOpen::WaitingForCi)),
+                            Some(ApprovalStatus::Approved),
+                            None,
+                            );
+                        cvar.notify_one();
+                        println!("Notified...");
+                    },
+                    "r-" | "отказываю" => {
+                        let mut list = list.lock().unwrap();
+                        update_or_create_mr(
+                            &mut *list,
+                            MrUid { target_project_id: target_project_id, id: mr_id },
+                            ssh_url,
+                            mr_human_number,
+                            &[
+                                Status::Open(SubStatusOpen::WaitingForCi),
+                                Status::Open(SubStatusOpen::WaitingForMerge)][..],
+                            Some(&last_commit_id),
+                            Some(Status::Open(SubStatusOpen::WaitingForReview)),
+                            Some(ApprovalStatus::Rejected),
+                            None,
+                            );
+                    },
+                    "try" | "попробуй" => {
+                        let mut list = list.lock().unwrap();
+                        update_or_create_mr(
+                            &mut *list,
+                            MrUid { target_project_id: target_project_id, id: mr_id },
+                            ssh_url,
+                            mr_human_number,
+                            &[],
+                            Some(&last_commit_id),
+                            Some(Status::Open(SubStatusOpen::WaitingForCi)),
+                            None,
+                            None,
+                            );
+                        cvar.notify_one();
+                        println!("Notified...");
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     } else {
@@ -408,8 +411,13 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             list = cvar.wait(list).unwrap();
         }
         println!("{:?}", &*list);
+
         let mut request = list.pop_front().unwrap();
         println!("Got the request: {:?}", request);
+
+        let list_copy = list.clone();
+        println!("List copy: {:?}", list_copy);
+
         let arg = request.checkout_sha.clone();
         let mr_id = request.id;
         let mr_human_number = request.human_number;
@@ -422,6 +430,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
             continue;
         }
+        mr_try_merge_and_report_if_impossible(&request, gitlab_api_root, private_token);
+
         if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
             continue;
         }
@@ -484,6 +494,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                     continue;
                 }
             }
+            drop(list);
             assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
             if request.approval_status == ApprovalStatus::Approved {
                 println!("Merging");
@@ -505,17 +516,15 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 println!("Updated existing MR");
                 let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-                let list_copy = list.clone();
-                drop(list);
 
                 for mr in list_copy.iter() {
+                    println!("MR to try merge: {:?}", mr);
                     git::set_remote_url(&ssh_url);
                     git::set_user("Shurik", "shurik@example.com");
                     mr_try_merge_and_report_if_impossible(mr, gitlab_api_root, private_token);
                 }
                 continue;
             }
-            drop(list);
         }
         let &(ref mutex, _) = queue;
         let list = &mut *mutex.lock().unwrap();
@@ -573,7 +582,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     let merge_status = mr.merge_status;
     println!("{:?}", mr.status);
     if merge_status != MergeStatus::CanBeMerged {
-        let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge)\"}}");
+        let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: #{}\"}}", arg);
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
         return;
     }
@@ -587,7 +596,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     match git::merge("master", mr_human_number, false) {
         Ok(_) => {},
         Err(_) => {
-            let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
+            let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: #{}\"}}", arg);
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
             return;
         }
@@ -660,3 +669,5 @@ fn main() {
         .expect("Couldn't start the web server");
     builder.join().unwrap();
 }
+
+// Nothing
