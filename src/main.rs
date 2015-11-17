@@ -301,7 +301,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 
         let mention = "@shurik ";
         let mention_len = mention.len();
-        // FIXME: thread '<unnamed>' panicked at 'index 0 and/or 8 in `.` do not lie on character boundary'
+
         if note.len() >= mention.len() {
             if &note[0..mention_len] == mention {
                 match &note[mention_len..] {
