@@ -420,6 +420,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
             continue;
         }
+        mr_try_merge_and_report_if_impossible(&request, gitlab_api_root, private_token);
+
         if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
             continue;
         }
