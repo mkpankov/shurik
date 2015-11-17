@@ -677,3 +677,5 @@ fn main() {
         .expect("Couldn't start the web server");
     builder.join().unwrap();
 }
+
+// Nothing
