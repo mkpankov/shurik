@@ -100,10 +100,10 @@ pub fn merge(branch: &str, mr_human_number: u64, no_ff: bool) -> Result<(), Stri
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Merge master to MR {}", mr_human_number);
+        println!("Merge {}", branch);
         Ok(())
     } else {
-        Err(format!("Couldn't merge the 'master' branch: {}", status))
+        Err(format!("Couldn't merge the {} branch: {}", branch, status))
     }
 }
 
