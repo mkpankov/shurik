@@ -50,6 +50,18 @@ enum MergeStatus {
     CanNotBeMerged,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum CommentPostStatus {
+    NotPosted,
+    Posted,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum MergeCheckStatus {
+    Unchecked,
+    Checked(MergeStatus, CommentPostStatus),
+}
+
 #[derive(Debug, Clone)]
 struct MergeRequest {
     id: MrUid,
@@ -58,7 +70,7 @@ struct MergeRequest {
     checkout_sha: String,
     status: Status,
     approval_status: ApprovalStatus,
-    merge_status: MergeStatus,
+    merge_check_status: MergeCheckStatus,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -99,7 +111,7 @@ struct MergeRequestBuilder {
     checkout_sha: Option<String>,
     status: Option<Status>,
     approval_status: Option<ApprovalStatus>,
-    merge_status: Option<MergeStatus>,
+    merge_check_status: Option<MergeCheckStatus>,
 }
 
 impl MergeRequestBuilder {
@@ -111,7 +123,7 @@ impl MergeRequestBuilder {
             checkout_sha: None,
             status: None,
             approval_status: None,
-            merge_status: None,
+            merge_check_status: None,
         }
     }
     fn with_checkout_sha(mut self, checkout_sha: &str) -> Self {
@@ -126,12 +138,12 @@ impl MergeRequestBuilder {
         self.approval_status = Some(approval_status);
         self
     }
-    fn with_merge_status(mut self, merge_status: MergeStatus) -> Self {
-        self.merge_status = Some(merge_status);
+    fn with_merge_check_status(mut self, merge_check_status: MergeCheckStatus) -> Self {
+        self.merge_check_status = Some(merge_check_status);
         self
     }
     fn build(self) -> Result<MergeRequest, ()> {
-        if let (Some(checkout_sha), Some(status), Some(approval_status), Some(merge_status)) = (self.checkout_sha, self.status, self.approval_status, self.merge_status) {
+        if let (Some(checkout_sha), Some(status), Some(approval_status), Some(merge_status)) = (self.checkout_sha, self.status, self.approval_status, self.merge_check_status) {
             Ok(MergeRequest {
                 id: self.id,
                 ssh_url: self.ssh_url,
@@ -139,7 +151,7 @@ impl MergeRequestBuilder {
                 checkout_sha: checkout_sha,
                 status: status,
                 approval_status: approval_status,
-                merge_status: merge_status,
+                merge_check_status: merge_status,
             })
         } else {
             Err(())
@@ -155,7 +167,7 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
                        new_checkout_sha: Option<&str>,
                        new_status: Option<Status>,
                        new_approval_status: Option<ApprovalStatus>,
-                       new_merge_status: Option<MergeStatus>) {
+                       new_merge_check_status: Option<MergeCheckStatus>) {
     if let Some(mut existing_mr) =
         find_mr_mut(&mut *list, id)
     {
@@ -168,8 +180,8 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
             if let Some(new_approval_status) = new_approval_status {
                 existing_mr.approval_status = new_approval_status;
             }
-            if let Some(new_merge_status) = new_merge_status {
-                existing_mr.merge_status = new_merge_status;
+            if let Some(new_merge_check_status) = new_merge_check_status {
+                existing_mr.merge_check_status = new_merge_check_status;
             }
             if let Some(new_checkout_sha) = new_checkout_sha {
                 existing_mr.checkout_sha = new_checkout_sha.to_owned();
@@ -183,7 +195,7 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
         .with_checkout_sha(new_checkout_sha.unwrap())
         .with_status(new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)))
         .with_approval_status(new_approval_status.unwrap())
-        .with_merge_status(new_merge_status.unwrap())
+        .with_merge_check_status(new_merge_check_status.unwrap_or(MergeCheckStatus::Unchecked))
         .build()
         .unwrap();
 
@@ -226,12 +238,6 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
         _ => panic!("Unexpected MR action: {}", action),
     };
 
-    let merge_status_string = json.lookup("object_attributes.merge_status").unwrap().as_string().unwrap();
-    let merge_status = match merge_status_string {
-        "can_be_merged" | "unchecked" => MergeStatus::CanBeMerged,
-        _ => MergeStatus::CanNotBeMerged,
-    };
-
     {
         let mut list = list.lock().unwrap();
         if let Some(mut existing_mr) =
@@ -241,7 +247,6 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
         {
             existing_mr.status = new_status;
             existing_mr.approval_status = ApprovalStatus::Pending;
-            existing_mr.merge_status = merge_status;
             existing_mr.checkout_sha = checkout_sha.to_string();
             println!("Updated existing MR");
             return Ok(Response::with(status::Ok));
@@ -253,7 +258,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
             status: new_status,
             human_number: mr_human_number,
             approval_status: ApprovalStatus::Pending,
-            merge_status: merge_status,
+            merge_check_status: MergeCheckStatus::Unchecked,
         };
         list.push_back(incoming);
         println!("Queued up...");
@@ -304,11 +309,6 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
             "merged" => Status::Merged,
             _ => panic!("Unexpected MR state: {}", state),
         };
-        let merge_status_string = json.lookup("merge_request.merge_status").unwrap().as_string().unwrap();
-        let merge_status = match merge_status_string {
-            "can_be_merged" | "unchecked" => MergeStatus::CanBeMerged,
-            _ => MergeStatus::CanNotBeMerged,
-        };
 
         let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
         let note = attrs.get("note").unwrap().as_string().unwrap();
@@ -328,7 +328,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                         Some(&last_commit_id),
                         Some(Status::Open(SubStatusOpen::WaitingForCi)),
                         Some(ApprovalStatus::Approved),
-                        Some(merge_status),
+                        None,
                         );
                     cvar.notify_one();
                     println!("Notified...");
@@ -346,7 +346,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                         Some(&last_commit_id),
                         Some(Status::Open(SubStatusOpen::WaitingForReview)),
                         Some(ApprovalStatus::Rejected),
-                        Some(merge_status),
+                        None,
                         );
                 },
                 "try" | "попробуй" => {
@@ -360,7 +360,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                         Some(&last_commit_id),
                         Some(Status::Open(SubStatusOpen::WaitingForCi)),
                         None,
-                        Some(merge_status),
+                        None,
                         );
                     cvar.notify_one();
                     println!("Notified...");
@@ -414,13 +414,20 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let mr_id = request.id;
         let mr_human_number = request.human_number;
         let request_status = request.status;
-        let merge_status = request.merge_status;
+        let merge_check_status = request.merge_check_status;
         let ssh_url = request.ssh_url.clone();
         println!("{:?}", request.status);
-        if merge_status != MergeStatus::CanBeMerged {
-            let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge)\"}}");
-            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-            continue;
+        match merge_check_status {
+            MergeCheckStatus::Unchecked => {},
+            MergeCheckStatus::Checked(merge_status, post_status) => {
+                if merge_status != MergeStatus::CanBeMerged {
+                    if post_status == CommentPostStatus::NotPosted {
+                        let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge)\"}}");
+                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                    }
+                    continue;
+                }
+            }
         }
         if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
             continue;
@@ -511,7 +518,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 for mr in list_copy.iter() {
                     git::set_remote_url(&ssh_url);
                     git::set_user("Shurik", "shurik@example.com");
-                    mr_try_merge_and_report_if_impossible(mr, gitlab_api_root, private_token);
+                    mr_try_merge_and_report_if_impossible(mr, mutex, gitlab_api_root, private_token);
                 }
                 continue;
             }
@@ -563,6 +570,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 }
 
 fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
+                                         list: &Mutex<LinkedList<MergeRequest>>,
                                          gitlab_api_root: &str,
                                          private_token: &str)
 {
@@ -570,13 +578,8 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     let arg = mr.checkout_sha.clone();
     let mr_id = mr.id;
     let mr_human_number = mr.human_number;
-    let merge_status = mr.merge_status;
     println!("{:?}", mr.status);
-    if merge_status != MergeStatus::CanBeMerged {
-        let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge)\"}}");
-        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-        return;
-    }
+
     git::reset_hard(None);
 
     git::checkout("master");
@@ -587,8 +590,15 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     match git::merge("master", mr_human_number, false) {
         Ok(_) => {},
         Err(_) => {
-            let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
-            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            let mut list = list.lock().unwrap();
+            if let Some(old_mr) = find_mr_mut(&mut *list, mr_id)
+            {
+                if old_mr.checkout_sha == mr.checkout_sha {
+                    old_mr.merge_check_status = MergeCheckStatus::Checked(MergeStatus::CanNotBeMerged, CommentPostStatus::Posted);
+                    let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: #{}\"}}", arg);
+                    gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                }
+            }
             return;
         }
     }
