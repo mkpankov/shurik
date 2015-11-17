@@ -474,6 +474,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         if result_string == "SUCCESS" {
             let &(ref mutex, _) = queue;
             let list = &mut *mutex.lock().unwrap();
+            let list_copy = list.clone();
+            println!("List copy: {:?}", list_copy);
             if let Some(new_request) = find_mr_mut(list, mr_id)
             {
                 if new_request.checkout_sha == request.checkout_sha {
@@ -492,6 +494,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                     continue;
                 }
             }
+            drop(list);
             assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
             if request.approval_status == ApprovalStatus::Approved {
                 println!("Merging");
@@ -513,17 +516,15 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 println!("Updated existing MR");
                 let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-                let list_copy = list.clone();
-                drop(list);
 
                 for mr in list_copy.iter() {
+                    println!("MR to try merge: {:?}", mr);
                     git::set_remote_url(&ssh_url);
                     git::set_user("Shurik", "shurik@example.com");
                     mr_try_merge_and_report_if_impossible(mr, mutex, gitlab_api_root, private_token);
                 }
                 continue;
             }
-            drop(list);
         }
         let &(ref mutex, _) = queue;
         let list = &mut *mutex.lock().unwrap();
