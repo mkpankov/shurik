@@ -411,8 +411,13 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             list = cvar.wait(list).unwrap();
         }
         println!("{:?}", &*list);
+
         let mut request = list.pop_front().unwrap();
         println!("Got the request: {:?}", request);
+
+        let list_copy = list.clone();
+        println!("List copy: {:?}", list_copy);
+
         let arg = request.checkout_sha.clone();
         let mr_id = request.id;
         let mr_human_number = request.human_number;
@@ -476,8 +481,6 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         if result_string == "SUCCESS" {
             let &(ref mutex, _) = queue;
             let list = &mut *mutex.lock().unwrap();
-            let list_copy = list.clone();
-            println!("List copy: {:?}", list_copy);
             if let Some(new_request) = find_mr_mut(list, mr_id)
             {
                 if new_request.checkout_sha == request.checkout_sha {
