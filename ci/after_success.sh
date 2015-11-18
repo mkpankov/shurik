@@ -8,3 +8,5 @@ set -x
 
 scp ./ci/run.sh user@host:
 scp ./target/debug/shurik user@host:
+
+ssh-keyscan gitlab.host >> ~/.ssh/known_hosts
