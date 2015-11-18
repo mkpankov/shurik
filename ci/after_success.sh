@@ -8,7 +8,7 @@ set -x
 
 HOST='user@host'
 
-ssh "$HOST" 'rm shurik_new'
+ssh "$HOST" 'rm -f shurik_new'
 
 scp ./ci/wait_deploy_run.sh "$HOST:"
 scp ./target/debug/shurik "$HOST:shurik_new"
