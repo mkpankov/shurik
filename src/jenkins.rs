@@ -24,7 +24,7 @@ pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str) -> 
         panic!("Couldn't notify the Jenkins: {}", status)
     }
 
-    println!("Notified the Jenkins");
+    info!("Notified the Jenkins");
 
     let re = Regex::new(r"Location: ([^\n]*)").unwrap();
     let location = re.captures(&stderr).unwrap().at(1).unwrap();
@@ -52,16 +52,16 @@ pub fn poll_queue(user: &str, password: &str, location: &str) -> String {
             panic!("Couldn't get queue item from Jenkins: {}", status)
         }
 
-        println!("Got queue item");
+        info!("Got queue item");
 
         let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
-        println!("data: {:?}", json);
-        println!("object? {}", json.is_object());
+        debug!("data: {:?}", json);
+        debug!("object? {}", json.is_object());
         let obj = json.as_object().unwrap();
         if let Some(executable) = obj.get("executable") {
             let url = executable.as_object().unwrap().get("url").unwrap();
             arg = url.as_string().unwrap().to_string();
-            println!("Parsed the final url");
+            debug!("Parsed the final url");
             break;
         }
 
@@ -93,16 +93,16 @@ pub fn poll_build(user: &str, password: &str, build_url: &str) -> String {
             panic!("Couldn't poll the Jenkins build: {}", status)
         }
 
-        println!("Polled");
+        info!("Polled");
 
         let json: serde_json::value::Value = serde_json::from_str(&stdout).unwrap();
-        println!("data: {:?}", json);
-        println!("object? {}", json.is_object());
+        debug!("data: {:?}", json);
+        debug!("object? {}", json.is_object());
         let obj = json.as_object().unwrap();
         if let Some(result) = obj.get("result") {
             if ! result.is_null() {
                 result_string = result.as_string().unwrap().to_owned();
-                println!("Parsed response, result_string == {}", result_string);
+                debug!("Parsed response, result_string == {}", result_string);
 
                 break;
             }

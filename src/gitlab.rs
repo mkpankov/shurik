@@ -14,9 +14,10 @@ pub fn post_comment(api_root: &str,
     headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
     headers.set_raw("PRIVATE-TOKEN", vec![private_token.to_owned().into_bytes()]);
 
-    println!("headers == {:?}", headers);
+    debug!("headers == {:?}", headers);
     let MrUid { target_project_id, id } = mr_id;
 
+    info!("Posting comment: {}", message);
     let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", api_root, target_project_id, id))
         .headers(headers)
         .body(message)
