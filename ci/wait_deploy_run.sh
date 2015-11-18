@@ -15,7 +15,11 @@ sleep 10
 echo 6
 
 echo 7
-pkill shurik
+if pgrep shurik; then
+    echo 7a
+    pkill shurik
+    echo 7b
+fi;
 echo 8
 mv shurik_new shurik
 echo 9
