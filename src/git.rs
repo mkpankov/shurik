@@ -10,7 +10,7 @@ pub fn fetch(workspace_dir: &str, key_path: &str) {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Fetched remote");
+        info!("Fetched remote");
     } else {
         panic!("Couldn't fetch remote: {}", status)
     }
@@ -25,7 +25,7 @@ pub fn checkout(workspace_dir: &str, branch: &str) {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Checked out {}", branch);
+        info!("Checked out {}", branch);
     } else {
         panic!("Couldn't checkout the {} branch: {}", branch, status)
     }
@@ -43,7 +43,7 @@ pub fn reset_hard(workspace_dir: &str, to: Option<&str>) {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Reset current branch to {}", to.unwrap_or("HEAD"));
+        info!("Reset current branch to {}", to.unwrap_or("HEAD"));
     } else {
         panic!("Couldn't reset current branch: {}", status)
     }
@@ -58,7 +58,7 @@ pub fn status(workspace_dir: &str) {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Queried status");
+        info!("Queried status");
     } else {
         panic!("Couldn't query the git status: {}", status)
     }
@@ -79,7 +79,7 @@ pub fn push(workspace_dir: &str, key_path: &str, do_force: bool) {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Push current branch");
+        info!("Push current branch");
     } else {
         panic!("Couldn't push the current branch: {}", status)
     }
@@ -102,7 +102,7 @@ pub fn merge(workspace_dir: &str, branch: &str, mr_human_number: u64, no_ff: boo
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Merge {}", branch);
+        info!("Merge {}", branch);
         Ok(())
     } else {
         Err(format!("Couldn't merge the {} branch: {}", branch, status))
@@ -119,7 +119,7 @@ pub fn rebase(workspace_dir: &str, to: &str) -> Result<(), String> {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Rebase MR to 'master'");
+        info!("Rebase MR to 'master'");
         Ok(())
     } else {
         Err(format!("Couldn't rebase MR to 'master': {}", status))
@@ -135,7 +135,7 @@ pub fn set_remote_url(workspace_dir: &str, url: &str) {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Set remote 'origin' URL to {}", url);
+        info!("Set remote 'origin' URL to {}", url);
     } else {
         panic!("Couldn't set remote 'origin' URL: {}", status)
     }
@@ -150,7 +150,7 @@ pub fn set_user(workspace_dir: &str, name: &str, email: &str) {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Set user name to {}", name);
+        info!("Set user name to {}", name);
     } else {
         panic!("Couldn't set user name: {}", status)
     }
@@ -162,7 +162,7 @@ pub fn set_user(workspace_dir: &str, name: &str, email: &str) {
             panic!("failed to execute process: {}", e)
         });
     if ExitStatus::success(&status) {
-        println!("Set user email to {}", email);
+        info!("Set user email to {}", email);
     } else {
         panic!("Couldn't set user email: {}", status)
     }
