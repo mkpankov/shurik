@@ -10,6 +10,10 @@ while lsof | egrep -q "$HOME/shurik_new\b"; do
 done;
 echo ok
 
+echo -n Sleeping for 10 seconds for running process to finish its job...
+sleep 10;
+echo ok
+
 echo Going to kill running process...
 if pgrep shurik; then
     echo -n found running, killing...
