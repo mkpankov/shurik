@@ -10,7 +10,7 @@ HOST='user@host'
 
 ssh "$HOST" 'rm shurik_new'
 
-scp ./ci/run.sh "$HOST:"
+scp ./ci/wait_deploy_run.sh "$HOST:"
 scp ./target/debug/shurik "$HOST:shurik_new"
 ssh "$HOST" 'ssh-keyscan gitlab.host > ~/.ssh/known_hosts'
 
