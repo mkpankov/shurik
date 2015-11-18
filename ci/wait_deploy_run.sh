@@ -2,30 +2,30 @@
 set -e
 set -u
 
-echo 1
+echo -n Going to wait for "$HOME/shurik_new\b" being closed...
 while lsof | egrep -q "$HOME/shurik_new\b"; do
-    echo 2
+    echo -n ' '
     sleep 1;
-    echo 3
+    echo -n .
 done;
-echo 4
+echo ok
 
-echo 5
-sleep 10
-echo 6
+echo -n Sleeping for 10 seconds for running process to finish its job...
+sleep 10;
+echo ok
 
-echo 7
-if pgrep shurik; then
-    echo 7a
+echo Going to kill running process...
+if pgrep shurik >/dev/null 2>&1; then
+    echo -n found running, killing...
     pkill shurik
-    echo 7b
 fi;
-echo 8
+echo ok
+echo -n Moving new file over old...
 mv shurik_new shurik
-echo 9
+echo ok
 
-echo 10
+echo Launching new file!
 RUST_BACKTRACE=1
 export RUST_BACKTRACE
 ./shurik
-echo 11
+echo This point is reached after process is terminated
