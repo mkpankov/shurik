@@ -2,6 +2,9 @@
 set -e
 set -u
 
+t=$(cat logname || tempfile)
+trap "rm -f -- '$t'" EXIT
+
 echo -n Going to wait for "$HOME/shurik_new\b" being closed...
 while lsof | egrep -q "$HOME/shurik_new\b"; do
     echo -n ' '
@@ -29,3 +32,4 @@ RUST_BACKTRACE=1
 export RUST_BACKTRACE
 ./shurik
 echo This point is reached after process is terminated
+trap - EXIT
