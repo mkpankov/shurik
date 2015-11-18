@@ -6,5 +6,6 @@ set -x
 
 . ./environment
 
+scp ./ci/run.sh user@host:
 scp ./target/debug/shurik user@host:
-ssh user@host 'pkill shurik || nohup "RUST_BACKTRACE=1 ./shurik"'
+ssh user@host 'pkill shurik || nohup "./run.sh"'
