@@ -1,10 +1,10 @@
 use ::std::process::{Command, ExitStatus};
 
-pub fn fetch() {
-    let git_fetch_command = "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git fetch";
+pub fn fetch(workspace_dir: &str, key_path: &str) {
+    let git_fetch_command = format!("ssh-add {} && git fetch", key_path);
     let status = Command::new("ssh-agent")
         .arg("sh").arg("-c").arg(git_fetch_command)
-        .current_dir("workspace/shurik")
+        .current_dir(workspace_dir)
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
@@ -16,10 +16,10 @@ pub fn fetch() {
     }
 }
 
-pub fn checkout(branch: &str) {
+pub fn checkout(workspace_dir: &str, branch: &str) {
     let status = Command::new("git")
         .arg("checkout").arg(branch)
-        .current_dir("workspace/shurik")
+        .current_dir(workspace_dir)
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
@@ -31,10 +31,10 @@ pub fn checkout(branch: &str) {
     }
 }
 
-pub fn reset_hard(to: Option<&str>) {
+pub fn reset_hard(workspace_dir: &str, to: Option<&str>) {
     let mut command = Command::new("git");
     let mut builder = command
-        .arg("reset").arg("--hard").current_dir("workspace/shurik");
+        .arg("reset").arg("--hard").current_dir(workspace_dir);
     if let Some(to) = to {
         builder.arg(to);
     }
@@ -49,10 +49,10 @@ pub fn reset_hard(to: Option<&str>) {
     }
 }
 
-pub fn status() {
+pub fn status(workspace_dir: &str) {
     let status = Command::new("git")
         .arg("status")
-        .current_dir("workspace/shurik")
+        .current_dir(workspace_dir)
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
@@ -64,16 +64,16 @@ pub fn status() {
     }
 }
 
-pub fn push(do_force: bool) {
+pub fn push(workspace_dir: &str, key_path: &str, do_force: bool) {
     let git_push_command = if do_force {
-        "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push -u --force"
+        format!("ssh-add {} && git push -u --force", key_path)
     } else {
-        "ssh-add /home/mkpankov/.ssh/shurik-host.id_rsa && git push -u"
+        format!("ssh-add {} && git push -u", key_path)
     };
 
     let status = Command::new("ssh-agent")
         .arg("sh").arg("-c").arg(git_push_command)
-        .current_dir("workspace/shurik")
+        .current_dir(workspace_dir)
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
@@ -85,14 +85,16 @@ pub fn push(do_force: bool) {
     }
 }
 
-pub fn merge(branch: &str, mr_human_number: u64, no_ff: bool) -> Result<(), String> {
+pub fn merge(workspace_dir: &str, branch: &str, mr_human_number: u64, no_ff: bool) -> Result<(), String> {
     let mut command = Command::new("git");
     let mut builder = command
         .arg("merge").arg(branch)
-        .arg(&*format!("-m \"Merging MR !{}\"", mr_human_number))
-        .current_dir("workspace/shurik");
+        .current_dir(workspace_dir);
     if no_ff {
         builder.arg("--no-ff");
+        builder.arg(&*format!("-m \"Merging MR !{}\"", mr_human_number));
+    } else {
+        builder.arg(&*format!("-m \"Updating MR !{}\"", mr_human_number));
     }
     let status = builder
         .status()
@@ -108,10 +110,10 @@ pub fn merge(branch: &str, mr_human_number: u64, no_ff: bool) -> Result<(), Stri
 }
 
 #[allow(unused)]
-pub fn rebase(to: &str) -> Result<(), String> {
+pub fn rebase(workspace_dir: &str, to: &str) -> Result<(), String> {
     let status = Command::new("git")
         .arg("rebase").arg(to)
-        .current_dir("workspace/shurik")
+        .current_dir(workspace_dir)
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
@@ -124,10 +126,10 @@ pub fn rebase(to: &str) -> Result<(), String> {
     }
 }
 
-pub fn set_remote_url(url: &str) {
+pub fn set_remote_url(workspace_dir: &str, url: &str) {
     let status = Command::new("git")
         .arg("remote").arg("set-url").arg("origin").arg(url)
-        .current_dir("workspace/shurik")
+        .current_dir(workspace_dir)
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
@@ -139,10 +141,10 @@ pub fn set_remote_url(url: &str) {
     }
 }
 
-pub fn set_user(name: &str, email: &str) {
+pub fn set_user(workspace_dir: &str, name: &str, email: &str) {
     let status = Command::new("git")
         .arg("config").arg("user.name").arg(name)
-        .current_dir("workspace/shurik")
+        .current_dir(workspace_dir)
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)

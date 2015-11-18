@@ -1,3 +1,7 @@
+[general]
+
+workspace-dir = "/path/to/shurik/workspace/project_name"
+
 [gitlab]
 
 user = "foobar"
@@ -7,6 +11,8 @@ reviewers = [ "foobaz_gitlab_login" ]
 
 webhook-address = "your-ip-or-hostname-here"
 webhook-port = "10042"
+
+ssh-key-path = "/path/to/private/ssh/key/of/shurik/for/gitlab"
 
 [jenkins]
 
