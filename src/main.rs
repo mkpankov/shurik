@@ -594,6 +594,8 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
 }
 
 fn main() {
+    env_logger::init().unwrap();
+
     let matches =
         App::new("shurik")
         .version("0.1")
