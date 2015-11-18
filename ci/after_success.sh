@@ -6,7 +6,9 @@ set -x
 
 . ./environment
 
-scp ./ci/run.sh user@host:
-scp ./target/debug/shurik user@host:
+HOST='user@host'
 
-ssh-keyscan gitlab.host >> ~/.ssh/known_hosts
+scp ./ci/run.sh "$HOST:"
+scp ./target/debug/shurik "$HOST:"
+
+ssh "$HOST" 'ssh-keyscan gitlab.host >> ~/.ssh/known_hosts'
