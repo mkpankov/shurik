@@ -15,7 +15,7 @@ sleep 10;
 echo ok
 
 echo Going to kill running process...
-if pgrep shurik; then
+if pgrep shurik >/dev/null 2>&1; then
     echo -n found running, killing...
     pkill shurik
 fi;
