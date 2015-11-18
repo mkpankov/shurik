@@ -371,6 +371,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
     let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
     let gitlab_password = config.lookup("gitlab.password").unwrap().as_str().unwrap();
     let gitlab_api_root = config.lookup("gitlab.url").unwrap().as_str().unwrap();
+    let workspace_dir = config.lookup("general.workspace-dir").unwrap().as_str().unwrap();
+    let key_path = config.lookup("gitlab.ssh-key-path").unwrap().as_str().unwrap();
 
     let client = Client::new();
 
@@ -419,16 +421,16 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
         let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
-        git::set_remote_url(&ssh_url);
-        git::set_user("Shurik", "shurik@example.com");
-        git::fetch();
-        git::reset_hard(None);
+        git::set_remote_url(workspace_dir, &ssh_url);
+        git::set_user(workspace_dir, "Shurik", "shurik@example.com");
+        git::fetch(workspace_dir, key_path);
+        git::reset_hard(workspace_dir, None);
 
-        git::checkout("master");
-        git::reset_hard(Some("origin/master"));
-        git::checkout("try");
-        git::reset_hard(Some(&arg));
-        match git::merge("master", mr_human_number, false) {
+        git::checkout(workspace_dir, "master");
+        git::reset_hard(workspace_dir, Some("origin/master"));
+        git::checkout(workspace_dir, "try");
+        git::reset_hard(workspace_dir, Some(&arg));
+        match git::merge(workspace_dir, "master", mr_human_number, false) {
             Ok(_) => {},
             Err(_) => {
                 let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -436,7 +438,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 continue;
             }
         }
-        git::push(true);
+        git::push(workspace_dir, key_path, true);
 
         let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
         let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
@@ -480,8 +482,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                 let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                 request.status = Status::Open(SubStatusOpen::WaitingForMerge);
-                git::checkout("master");
-                match git::merge("try", mr_human_number, true) {
+                git::checkout(workspace_dir, "master");
+                match git::merge(workspace_dir, "try", mr_human_number, true) {
                     Ok(_) => {},
                     Err(_) => {
                         let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -489,8 +491,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
                         continue;
                     },
                 }
-                git::status();
-                git::push(false);
+                git::status(workspace_dir);
+                git::push(workspace_dir, key_path, false);
                 request.status = Status::Merged;
                 println!("Updated existing MR");
                 let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
@@ -498,9 +500,9 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 
                 for mr in list_copy.iter() {
                     println!("MR to try merge: {:?}", mr);
-                    git::set_remote_url(&ssh_url);
-                    git::set_user("Shurik", "shurik@example.com");
-                    mr_try_merge_and_report_if_impossible(mr, gitlab_api_root, private_token);
+                    git::set_remote_url(workspace_dir, &ssh_url);
+                    git::set_user(workspace_dir, "Shurik", "shurik@example.com");
+                    mr_try_merge_and_report_if_impossible(mr, gitlab_api_root, private_token, workspace_dir, key_path);
                 }
                 continue;
             }
@@ -552,7 +554,9 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 
 fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
                                          gitlab_api_root: &str,
-                                         private_token: &str)
+                                         private_token: &str,
+                                         workspace_dir: &str,
+                                         key_path: &str)
 {
     println!("Got the mr: {:?}", mr);
     let arg = mr.checkout_sha.clone();
@@ -565,14 +569,14 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
         return;
     }
-    git::reset_hard(None);
+    git::reset_hard(workspace_dir, None);
 
-    git::checkout("master");
-    git::reset_hard(Some("origin/master"));
-    git::checkout("try");
-    git::fetch();
-    git::reset_hard(Some(&arg));
-    match git::merge("master", mr_human_number, false) {
+    git::checkout(workspace_dir, "master");
+    git::reset_hard(workspace_dir, Some("origin/master"));
+    git::checkout(workspace_dir, "try");
+    git::fetch(workspace_dir, key_path);
+    git::reset_hard(workspace_dir, Some(&arg));
+    match git::merge(workspace_dir, "master", mr_human_number, false) {
         Ok(_) => {},
         Err(_) => {
             let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: #{}\"}}", arg);
