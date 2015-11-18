@@ -3,7 +3,7 @@ set -e
 set -u
 
 echo 1
-while lsof 2>/dev/null | egrep -q "$HOME/shurik_new\b" >/dev/null 2>&1; do
+while lsof | egrep -q "$HOME/shurik_new\b"; do
     echo 2
     sleep 1;
     echo 3
