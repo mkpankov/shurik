@@ -8,4 +8,3 @@ set -x
 
 scp ./ci/run.sh user@host:
 scp ./target/debug/shurik user@host:
-ssh user@host 'pkill shurik || nohup "./run.sh"'
