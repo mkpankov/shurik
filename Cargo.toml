@@ -5,8 +5,10 @@ version = "0.1.0"
 
 [dependencies]
 clap = "1.4.7"
+env_logger = "0.3.2"
 hyper = "0.6.15"
 iron = "0.2.4"
+log = "0.3.3"
 regex = "0.1.41"
 router = "0.0.15"
 serde_json = "0.6.0"
