@@ -256,7 +256,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
 }
 
 fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
-                  config: &toml::Value)
+                  project: &Project)
                   -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
 
@@ -277,8 +277,8 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let user = obj.get("user").unwrap().as_object().unwrap();
     let username = user.get("username").unwrap().as_string().unwrap();
 
-    let reviewers = config.lookup("gitlab.reviewers").unwrap().as_slice().unwrap();
-    let is_comment_author_reviewer = reviewers.iter().any(|s| s.as_str().unwrap() == username);
+    let reviewers = &project.reviewers;
+    let is_comment_author_reviewer = reviewers.iter().any(|s| s == username);
 
     if is_comment_author_reviewer {
         let &(ref list, ref cvar) = queue;
@@ -637,7 +637,7 @@ fn main() {
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
-    for id in projects.keys() {
+    for (id, p) in projects {
         let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
         let queue2 = queue.clone();
         let queue3 = queue.clone();
@@ -649,7 +649,7 @@ fn main() {
                     handle_mr(req, &*queue2));
         router.post(format!("/api/v1/{}/comment", id),
                     move |req: &mut Request|
-                    handle_comment(req, &*queue3, &*config2));
+                    handle_comment(req, &*queue3, &p));
 
         let builder = thread::spawn(move || {
             handle_build_request(&*queue, &*config3);
