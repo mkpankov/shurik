@@ -16,9 +16,10 @@ use clap::App;
 use hyper::Client;
 use iron::*;
 
-use std::collections::LinkedList;
+use std::collections::{LinkedList, HashMap};
 use std::fs::File;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
@@ -194,7 +195,10 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
     info!("Queued up MR: {:?}", list.back());
 }
 
-fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar))
+fn handle_mr(
+    req: &mut Request,
+    queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
+    project: &Project)
              -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
     let &(ref list, _) = queue;
@@ -212,6 +216,12 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
         error!("This endpoint only accepts objects with \"object_kind\":\"merge_request\"");
         return Ok(Response::with(status::Ok));
     }
+    let project_id = json.lookup("object_attributes.target_project_id").unwrap().as_u64().unwrap();
+
+    if project_id != project.id as u64 {
+        error!("Project id mismatch. Handler is setup for {}, but webhook info has target_project_id {}", project.id, project_id);
+    }
+
     let obj = json.as_object().unwrap();
     let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
     let last_commit = attrs.get("last_commit").unwrap().as_object().unwrap();
@@ -237,29 +247,17 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
 
     {
         let mut list = list.lock().unwrap();
-        if let Some(mut existing_mr) =
-            find_mr_mut(
-                &mut *list,
-                MrUid { target_project_id: target_project_id, id: mr_id })
-        {
-            existing_mr.status = new_status;
-            existing_mr.approval_status = ApprovalStatus::Pending;
-            existing_mr.merge_status = merge_status;
-            existing_mr.checkout_sha = checkout_sha.to_string();
-            info!("Updated existing MR: {:?}", existing_mr);
-            return Ok(Response::with(status::Ok));
-        }
-        let incoming = MergeRequest {
-            id: MrUid { target_project_id: target_project_id, id: mr_id },
-            ssh_url: ssh_url.to_owned(),
-            checkout_sha: checkout_sha.to_owned(),
-            status: new_status,
-            human_number: mr_human_number,
-            approval_status: ApprovalStatus::Pending,
-            merge_status: merge_status,
-        };
-        list.push_back(incoming);
-        info!("Queued up: {:?}", list.back());
+        update_or_create_mr(
+            &mut *list,
+            MrUid { target_project_id: target_project_id, id: mr_id },
+            ssh_url,
+            mr_human_number,
+            &[],
+            Some(checkout_sha),
+            Some(new_status),
+            Some(ApprovalStatus::Pending),
+            Some(merge_status)
+            );
     }
 
     debug!("handle_mr finished           : {}", time::precise_time_ns());
@@ -267,7 +265,7 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
 }
 
 fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
-                  config: &toml::Value)
+                  project: &Project)
                   -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
 
@@ -288,8 +286,8 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let user = obj.get("user").unwrap().as_object().unwrap();
     let username = user.get("username").unwrap().as_string().unwrap();
 
-    let reviewers = config.lookup("gitlab.reviewers").unwrap().as_slice().unwrap();
-    let is_comment_author_reviewer = reviewers.iter().any(|s| s.as_str().unwrap() == username);
+    let reviewers = &project.reviewers;
+    let is_comment_author_reviewer = reviewers.iter().any(|s| s == username);
 
     if is_comment_author_reviewer {
         let &(ref list, ref cvar) = queue;
@@ -303,64 +301,55 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 
         let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
         let note = attrs.get("note").unwrap().as_string().unwrap();
+        let mut old_statuses = Vec::new();
+        let mut new_status = None;
+        let mut new_approval_status = None;
+        let mut needs_notification = false;
 
         let mention = "@shurik ";
         let mention_len = mention.len();
-
         if note.len() >= mention.len() {
             if &note[0..mention_len] == mention {
                 match &note[mention_len..] {
                     "r+" | "одобряю" => {
-                        let mut list = list.lock().unwrap();
-                        update_or_create_mr(
-                            &mut *list,
-                            MrUid { target_project_id: target_project_id, id: mr_id },
-                            ssh_url,
-                            mr_human_number,
-                            &[Status::Open(SubStatusOpen::WaitingForReview)][..],
-                            Some(&last_commit_id),
-                            Some(Status::Open(SubStatusOpen::WaitingForCi)),
-                            Some(ApprovalStatus::Approved),
-                            None,
-                            );
-                        cvar.notify_one();
-                        info!("Notified...");
+                        old_statuses.push(Status::Open(SubStatusOpen::WaitingForReview));
+                        new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
+                        new_approval_status = Some(ApprovalStatus::Approved);
+                        needs_notification = true;
                     },
                     "r-" | "отказываю" => {
-                        let mut list = list.lock().unwrap();
-                        update_or_create_mr(
-                            &mut *list,
-                            MrUid { target_project_id: target_project_id, id: mr_id },
-                            ssh_url,
-                            mr_human_number,
-                            &[
-                                Status::Open(SubStatusOpen::WaitingForCi),
-                                Status::Open(SubStatusOpen::WaitingForMerge)][..],
-                            Some(&last_commit_id),
-                            Some(Status::Open(SubStatusOpen::WaitingForReview)),
-                            Some(ApprovalStatus::Rejected),
-                            None,
-                            );
+                        old_statuses.extend(
+                            &[Status::Open(SubStatusOpen::WaitingForCi),
+                              Status::Open(SubStatusOpen::WaitingForMerge)]);
+                        new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
+                        new_approval_status = Some(ApprovalStatus::Rejected);
+                        ;
                     },
                     "try" | "попробуй" => {
-                        let mut list = list.lock().unwrap();
-                        update_or_create_mr(
-                            &mut *list,
-                            MrUid { target_project_id: target_project_id, id: mr_id },
-                            ssh_url,
-                            mr_human_number,
-                            &[],
-                            Some(&last_commit_id),
-                            Some(Status::Open(SubStatusOpen::WaitingForCi)),
-                            None,
-                            None,
-                            );
-                        cvar.notify_one();
-                        info!("Notified...");
+                        new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
+                        needs_notification = true;
+                    },
+                    _ => {
+                        warn!("Unknown command: {}", &note[mention_len..]);
+                        return Ok(Response::with(status::Ok));
                     }
-                    _ => {}
                 }
             }
+        }
+        update_or_create_mr(
+            &mut *list.lock().unwrap(),
+            MrUid { target_project_id: target_project_id, id: mr_id },
+            ssh_url,
+            mr_human_number,
+            &old_statuses,
+            Some(&last_commit_id),
+            new_status,
+            new_approval_status,
+            None,
+            );
+        if needs_notification {
+            cvar.notify_one();
+            info!("Notified...");
         }
     } else {
         info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
@@ -370,14 +359,17 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     return Ok(Response::with(status::Ok));
 }
 
-fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), config: &toml::Value) -> !
+fn handle_build_request(
+    queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
+    config: &toml::Value,
+    project: &Project) -> !
 {
     debug!("handle_build_request started : {}", time::precise_time_ns());
     let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
     let gitlab_password = config.lookup("gitlab.password").unwrap().as_str().unwrap();
     let gitlab_api_root = config.lookup("gitlab.url").unwrap().as_str().unwrap();
-    let workspace_dir = config.lookup("general.workspace-dir").unwrap().as_str().unwrap();
     let key_path = config.lookup("gitlab.ssh-key-path").unwrap().as_str().unwrap();
+    let workspace_dir = &project.workspace_dir.to_str().unwrap();
 
     let client = Client::new();
 
@@ -448,8 +440,8 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 
         let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
         let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
-        let token = config.lookup("jenkins.token").unwrap().as_str().unwrap();
-        let jenkins_job_url = config.lookup("jenkins.job-url").unwrap().as_str().unwrap();
+        let token = &project.token;
+        let jenkins_job_url = &project.job_url;
         debug!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
 
         let queue_url = jenkins::enqueue_build(http_user, http_password, jenkins_job_url, token);
@@ -540,6 +532,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             list.push_back(request);
         }
         info!("{:?}", &*list);
+        drop(list);
 
         let build_result_message = match &*result_string {
             "SUCCESS" => "успешно",
@@ -554,7 +547,6 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
-        drop(list);
         debug!("handle_build_request finished: {}", time::precise_time_ns());
     }
 }
@@ -640,24 +632,61 @@ fn main() {
     info!("GitLab port: {}", gitlab_port);
     info!("GitLab address: {}", gitlab_address);
 
-    let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
-    let queue2 = queue.clone();
-    let queue3 = queue.clone();
-    let config2 = config.clone();
+    let mut projects = HashMap::new();
+    for project_toml in config.lookup("project").unwrap().as_slice().unwrap() {
+        let key = project_toml.lookup("id").unwrap().as_integer().unwrap();
+        let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
+        let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
+        let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
+        let token = project_toml.lookup("token").unwrap().as_str().unwrap();
+        let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
 
-    let builder = thread::spawn(move || {
-        handle_build_request(&*queue, &*config);
-    });
+        let p = Project {
+            id: key,
+            workspace_dir: PathBuf::from(project_toml.lookup("workspace-dir").unwrap().as_str().unwrap()),
+            reviewers: string_vec,
+            token: token.to_owned(),
+            job_url: job_url.to_owned(),
+        };
+        projects.insert(key, p);
+    }
+    info!("Read projects: {:?}", projects);
 
     let mut router = router::Router::new();
-    router.post("/api/v1/mr",
-                move |req: &mut Request|
-                handle_mr(req, &*queue2));
-    router.post("/api/v1/comment",
-                move |req: &mut Request|
-                handle_comment(req, &*queue3, &*config2));
+    let mut builders = Vec::new();
+    for (id, p) in projects {
+        let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
+        let queue2 = queue.clone();
+        let queue3 = queue.clone();
+        let config2 = config.clone();
+        let config3 = config2.clone();
+        let pa = Arc::new(p);
+        let pa2 = pa.clone();
+        let pa3 = pa.clone();
+
+        router.post(format!("/api/v1/{}/mr", id),
+                    move |req: &mut Request|
+                    handle_mr(req, &*queue2, &*pa3));
+        router.post(format!("/api/v1/{}/comment", id),
+                    move |req: &mut Request|
+                    handle_comment(req, &*queue3, &*pa));
+
+        let builder = thread::spawn(move || {
+            handle_build_request(&*queue, &*config3, &*pa2);
+        });
+        builders.push(builder);
+    }
+
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
-    builder.join().unwrap();
+}
+
+#[derive(Debug)]
+struct Project {
+    id: i64,
+    workspace_dir: PathBuf,
+    reviewers: Vec<String>,
+    token: String,
+    job_url: String,
 }
