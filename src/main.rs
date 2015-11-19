@@ -650,7 +650,7 @@ fn main() {
         };
         projects.insert(key, p);
     }
-    println!("{:?}", projects);
+    info!("Read projects: {:?}", projects);
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
