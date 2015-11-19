@@ -631,8 +631,16 @@ fn main() {
     });
     let mut projects = HashMap::new();
     for project_toml in config3.lookup("project").unwrap().as_slice().unwrap() {
-        let key = project_toml.lookup("workspace-dir").unwrap().as_str().unwrap();
-        projects.insert(key, project_toml);
+        let key = project_toml.lookup("id").unwrap().as_integer().unwrap();
+        let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
+        let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
+        let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
+        let p = Project {
+            id: key,
+            workspace_dir: PathBuf::from(project_toml.lookup("workspace-dir").unwrap().as_str().unwrap()),
+            reviewers: string_vec,
+        };
+        projects.insert(key, p);
     }
     println!("{:?}", projects);
 
@@ -649,7 +657,9 @@ fn main() {
     builder.join().unwrap();
 }
 
+#[derive(Debug)]
 struct Project {
+    id: i64,
     workspace_dir: PathBuf,
     reviewers: Vec<String>,
 }
