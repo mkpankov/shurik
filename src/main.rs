@@ -440,8 +440,8 @@ fn handle_build_request(
 
         let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
         let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
-        let token = config.lookup("jenkins.token").unwrap().as_str().unwrap();
-        let jenkins_job_url = config.lookup("jenkins.job-url").unwrap().as_str().unwrap();
+        let token = &project.token;
+        let jenkins_job_url = &project.job_url;
         debug!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
 
         let queue_url = jenkins::enqueue_build(http_user, http_password, jenkins_job_url, token);
@@ -638,10 +638,15 @@ fn main() {
         let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
         let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
         let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
+        let token = project_toml.lookup("token").unwrap().as_str().unwrap();
+        let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
+
         let p = Project {
             id: key,
             workspace_dir: PathBuf::from(project_toml.lookup("workspace-dir").unwrap().as_str().unwrap()),
             reviewers: string_vec,
+            token: token.to_owned(),
+            job_url: job_url.to_owned(),
         };
         projects.insert(key, p);
     }
@@ -682,4 +687,6 @@ struct Project {
     id: i64,
     workspace_dir: PathBuf,
     reviewers: Vec<String>,
+    token: String,
+    job_url: String,
 }
