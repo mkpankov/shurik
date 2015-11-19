@@ -622,7 +622,6 @@ fn main() {
 
     let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
     let queue2 = queue.clone();
-    let queue3 = queue.clone();
     let config2 = config.clone();
     let config3 = config.clone();
 
@@ -645,12 +644,18 @@ fn main() {
     println!("{:?}", projects);
 
     let mut router = router::Router::new();
-    router.post("/api/v1/mr",
-                move |req: &mut Request|
-                handle_mr(req, &*queue2));
-    router.post("/api/v1/comment",
-                move |req: &mut Request|
-                handle_comment(req, &*queue3, &*config2));
+    for id in projects.keys() {
+        let queue2 = queue2.clone();
+        let queue3 = queue2.clone();
+        let config2 = config2.clone();
+        router.post(format!("/api/v1/{}/mr", id),
+                    move |req: &mut Request|
+                    handle_mr(req, &*queue2));
+        router.post(format!("/api/v1/{}/comment", id),
+                    move |req: &mut Request|
+                    handle_comment(req, &*queue3, &*config2));
+    }
+
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
