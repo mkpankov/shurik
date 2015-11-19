@@ -195,7 +195,10 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
     info!("Queued up MR: {:?}", list.back());
 }
 
-fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar))
+fn handle_mr(
+    req: &mut Request,
+    queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
+    project: &Project)
              -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
     let &(ref list, _) = queue;
@@ -213,6 +216,12 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
         error!("This endpoint only accepts objects with \"object_kind\":\"merge_request\"");
         return Ok(Response::with(status::Ok));
     }
+    let project_id = json.lookup("object_attributes.target_project_id").unwrap().as_u64().unwrap();
+
+    if project_id != project.id as u64 {
+        error!("Project id mismatch. Handler is setup for {}, but webhook info has target_project_id {}", project.id, project_id);
+    }
+
     let obj = json.as_object().unwrap();
     let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
     let last_commit = attrs.get("last_commit").unwrap().as_object().unwrap();
@@ -350,14 +359,17 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     return Ok(Response::with(status::Ok));
 }
 
-fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), config: &toml::Value) -> !
+fn handle_build_request(
+    queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
+    config: &toml::Value,
+    project: &Project) -> !
 {
     debug!("handle_build_request started : {}", time::precise_time_ns());
     let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
     let gitlab_password = config.lookup("gitlab.password").unwrap().as_str().unwrap();
     let gitlab_api_root = config.lookup("gitlab.url").unwrap().as_str().unwrap();
-    let workspace_dir = config.lookup("general.workspace-dir").unwrap().as_str().unwrap();
     let key_path = config.lookup("gitlab.ssh-key-path").unwrap().as_str().unwrap();
+    let workspace_dir = &project.workspace_dir.to_str().unwrap();
 
     let client = Client::new();
 
@@ -643,16 +655,19 @@ fn main() {
         let queue3 = queue.clone();
         let config2 = config.clone();
         let config3 = config2.clone();
+        let pa = Arc::new(p);
+        let pa2 = pa.clone();
+        let pa3 = pa.clone();
 
         router.post(format!("/api/v1/{}/mr", id),
                     move |req: &mut Request|
-                    handle_mr(req, &*queue2));
+                    handle_mr(req, &*queue2, &*pa3));
         router.post(format!("/api/v1/{}/comment", id),
                     move |req: &mut Request|
-                    handle_comment(req, &*queue3, &p));
+                    handle_comment(req, &*queue3, &*pa));
 
         let builder = thread::spawn(move || {
-            handle_build_request(&*queue, &*config3);
+            handle_build_request(&*queue, &*config3, &*pa2);
         });
         builders.push(builder);
     }
