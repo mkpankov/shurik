@@ -291,64 +291,55 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 
         let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
         let note = attrs.get("note").unwrap().as_string().unwrap();
+        let mut old_statuses = Vec::new();
+        let mut new_status = None;
+        let mut new_approval_status = None;
+        let mut needs_notification = false;
 
         let mention = "@shurik ";
         let mention_len = mention.len();
-
         if note.len() >= mention.len() {
             if &note[0..mention_len] == mention {
                 match &note[mention_len..] {
                     "r+" | "одобряю" => {
-                        let mut list = list.lock().unwrap();
-                        update_or_create_mr(
-                            &mut *list,
-                            MrUid { target_project_id: target_project_id, id: mr_id },
-                            ssh_url,
-                            mr_human_number,
-                            &[Status::Open(SubStatusOpen::WaitingForReview)][..],
-                            Some(&last_commit_id),
-                            Some(Status::Open(SubStatusOpen::WaitingForCi)),
-                            Some(ApprovalStatus::Approved),
-                            None,
-                            );
-                        cvar.notify_one();
-                        info!("Notified...");
+                        old_statuses.push(Status::Open(SubStatusOpen::WaitingForReview));
+                        new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
+                        new_approval_status = Some(ApprovalStatus::Approved);
+                        needs_notification = true;
                     },
                     "r-" | "отказываю" => {
-                        let mut list = list.lock().unwrap();
-                        update_or_create_mr(
-                            &mut *list,
-                            MrUid { target_project_id: target_project_id, id: mr_id },
-                            ssh_url,
-                            mr_human_number,
-                            &[
-                                Status::Open(SubStatusOpen::WaitingForCi),
-                                Status::Open(SubStatusOpen::WaitingForMerge)][..],
-                            Some(&last_commit_id),
-                            Some(Status::Open(SubStatusOpen::WaitingForReview)),
-                            Some(ApprovalStatus::Rejected),
-                            None,
-                            );
+                        old_statuses.extend(
+                            &[Status::Open(SubStatusOpen::WaitingForCi),
+                              Status::Open(SubStatusOpen::WaitingForMerge)]);
+                        new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
+                        new_approval_status = Some(ApprovalStatus::Rejected);
+                        ;
                     },
                     "try" | "попробуй" => {
-                        let mut list = list.lock().unwrap();
-                        update_or_create_mr(
-                            &mut *list,
-                            MrUid { target_project_id: target_project_id, id: mr_id },
-                            ssh_url,
-                            mr_human_number,
-                            &[],
-                            Some(&last_commit_id),
-                            Some(Status::Open(SubStatusOpen::WaitingForCi)),
-                            None,
-                            None,
-                            );
-                        cvar.notify_one();
-                        info!("Notified...");
+                        new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
+                        needs_notification = true;
+                    },
+                    _ => {
+                        warn!("Unknown command: {}", &note[mention_len..]);
+                        return Ok(Response::with(status::Ok));
                     }
-                    _ => {}
                 }
             }
+        }
+        update_or_create_mr(
+            &mut *list.lock().unwrap(),
+            MrUid { target_project_id: target_project_id, id: mr_id },
+            ssh_url,
+            mr_human_number,
+            &old_statuses,
+            Some(&last_commit_id),
+            new_status,
+            new_approval_status,
+            None,
+            );
+        if needs_notification {
+            cvar.notify_one();
+            info!("Notified...");
         }
     } else {
         info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
