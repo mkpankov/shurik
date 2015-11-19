@@ -519,6 +519,7 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
             list.push_back(request);
         }
         info!("{:?}", &*list);
+        drop(list);
 
         let build_result_message = match &*result_string {
             "SUCCESS" => "успешно",
@@ -533,7 +534,6 @@ fn handle_build_request(queue: &(Mutex<LinkedList<MergeRequest>>, Condvar), conf
 
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
-        drop(list);
         debug!("handle_build_request finished: {}", time::precise_time_ns());
     }
 }
