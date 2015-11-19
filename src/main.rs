@@ -237,29 +237,17 @@ fn handle_mr(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condva
 
     {
         let mut list = list.lock().unwrap();
-        if let Some(mut existing_mr) =
-            find_mr_mut(
-                &mut *list,
-                MrUid { target_project_id: target_project_id, id: mr_id })
-        {
-            existing_mr.status = new_status;
-            existing_mr.approval_status = ApprovalStatus::Pending;
-            existing_mr.merge_status = merge_status;
-            existing_mr.checkout_sha = checkout_sha.to_string();
-            info!("Updated existing MR: {:?}", existing_mr);
-            return Ok(Response::with(status::Ok));
-        }
-        let incoming = MergeRequest {
-            id: MrUid { target_project_id: target_project_id, id: mr_id },
-            ssh_url: ssh_url.to_owned(),
-            checkout_sha: checkout_sha.to_owned(),
-            status: new_status,
-            human_number: mr_human_number,
-            approval_status: ApprovalStatus::Pending,
-            merge_status: merge_status,
-        };
-        list.push_back(incoming);
-        info!("Queued up: {:?}", list.back());
+        update_or_create_mr(
+            &mut *list,
+            MrUid { target_project_id: target_project_id, id: mr_id },
+            ssh_url,
+            mr_human_number,
+            &[],
+            Some(checkout_sha),
+            Some(new_status),
+            Some(ApprovalStatus::Pending),
+            Some(merge_status)
+            );
     }
 
     debug!("handle_mr finished           : {}", time::precise_time_ns());
