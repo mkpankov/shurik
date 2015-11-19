@@ -620,16 +620,8 @@ fn main() {
     info!("GitLab port: {}", gitlab_port);
     info!("GitLab address: {}", gitlab_address);
 
-    let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
-    let queue2 = queue.clone();
-    let config2 = config.clone();
-    let config3 = config.clone();
-
-    let builder = thread::spawn(move || {
-        handle_build_request(&*queue, &*config);
-    });
     let mut projects = HashMap::new();
-    for project_toml in config3.lookup("project").unwrap().as_slice().unwrap() {
+    for project_toml in config.lookup("project").unwrap().as_slice().unwrap() {
         let key = project_toml.lookup("id").unwrap().as_integer().unwrap();
         let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
         let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
@@ -644,22 +636,30 @@ fn main() {
     println!("{:?}", projects);
 
     let mut router = router::Router::new();
+    let mut builders = Vec::new();
     for id in projects.keys() {
-        let queue2 = queue2.clone();
-        let queue3 = queue2.clone();
-        let config2 = config2.clone();
+        let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
+        let queue2 = queue.clone();
+        let queue3 = queue.clone();
+        let config2 = config.clone();
+        let config3 = config2.clone();
+
         router.post(format!("/api/v1/{}/mr", id),
                     move |req: &mut Request|
                     handle_mr(req, &*queue2));
         router.post(format!("/api/v1/{}/comment", id),
                     move |req: &mut Request|
                     handle_comment(req, &*queue3, &*config2));
+
+        let builder = thread::spawn(move || {
+            handle_build_request(&*queue, &*config3);
+        });
+        builders.push(builder);
     }
 
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
-    builder.join().unwrap();
 }
 
 #[derive(Debug)]
