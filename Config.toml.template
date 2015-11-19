@@ -1,13 +1,8 @@
-[general]
-
-workspace-dir = "/path/to/shurik/workspace/project_name"
-
 [gitlab]
 
 user = "foobar"
 password = "barbaz"
 url = "http://gitlab.host/api/v3"
-reviewers = [ "foobaz_gitlab_login" ]
 
 webhook-address = "your-ip-or-hostname-here"
 webhook-port = "10042"
@@ -20,3 +15,11 @@ user = "foobar"
 password = "foobar_api_token"
 token = "build_token_from_jenkins"
 job-url = "https://hudson.host/jenkins/job/shurik/build"
+
+[[project]]
+workspace-dir = "/path/to/shurik/workspace/project_name"
+reviewers = [ "foobaz_gitlab_login" ]
+
+[[project]]
+workspace-dir = "/path/to/shurik/workspace/another_project_name"
+reviewers = [ "barbar_gitlab_login" ]

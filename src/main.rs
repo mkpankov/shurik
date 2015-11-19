@@ -16,9 +16,10 @@ use clap::App;
 use hyper::Client;
 use iron::*;
 
-use std::collections::LinkedList;
+use std::collections::{LinkedList, HashMap};
 use std::fs::File;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
@@ -623,10 +624,17 @@ fn main() {
     let queue2 = queue.clone();
     let queue3 = queue.clone();
     let config2 = config.clone();
+    let config3 = config.clone();
 
     let builder = thread::spawn(move || {
         handle_build_request(&*queue, &*config);
     });
+    let mut projects = HashMap::new();
+    for project_toml in config3.lookup("project").unwrap().as_slice().unwrap() {
+        let key = project_toml.lookup("workspace-dir").unwrap().as_str().unwrap();
+        projects.insert(key, project_toml);
+    }
+    println!("{:?}", projects);
 
     let mut router = router::Router::new();
     router.post("/api/v1/mr",
@@ -639,4 +647,9 @@ fn main() {
         (&*gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
     builder.join().unwrap();
+}
+
+struct Project {
+    workspace_dir: PathBuf,
+    reviewers: Vec<String>,
 }
