@@ -444,7 +444,12 @@ fn handle_build_request(
         let jenkins_job_url = &project.job_url;
         debug!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
 
-        let queue_url = jenkins::enqueue_build(http_user, http_password, jenkins_job_url, token);
+        let run_type = if request.approval_status == ApprovalStatus::Approved {
+            "deploy"
+        } else {
+            "try"
+        };
+        let queue_url = jenkins::enqueue_build(http_user, http_password, jenkins_job_url, token, run_type);
         info!("Queue item URL: {}", queue_url);
 
         let build_url = jenkins::poll_queue(http_user, http_password, &queue_url);
