@@ -18,10 +18,12 @@ pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str, run
             panic!("failed to execute process: {}", e)
         });
     let status = output.status;
+    let stdout = output.stdout;
+    let stdout = String::from_utf8_lossy(&stdout);
     let stderr = output.stderr;
     let stderr = String::from_utf8_lossy(&stderr);
     if ! ExitStatus::success(&status) {
-        panic!("Couldn't notify the Jenkins: {}", status)
+        panic!("Couldn't notify the Jenkins: {}. Standard output: {}. Standard error: {}", status, stdout, stderr);
     }
 
     info!("Notified the Jenkins");
