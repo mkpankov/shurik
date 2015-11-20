@@ -186,7 +186,7 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
     let incoming = MergeRequestBuilder::new(id, ssh_url.to_owned(), human_number)
         .with_checkout_sha(new_checkout_sha.unwrap())
         .with_status(new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)))
-        .with_approval_status(new_approval_status.unwrap())
+        .with_approval_status(new_approval_status.unwrap_or(ApprovalStatus::Pending))
         .with_merge_status(new_merge_status.unwrap_or(MergeStatus::CanBeMerged))
         .build()
         .unwrap();
