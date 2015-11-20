@@ -5,23 +5,25 @@ use std::time::Duration;
 use ::std;
 use ::iron::*;
 
-pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str) -> String {
+pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str, run_type: &str) -> String {
     let output = Command::new("wget")
         .arg("-S").arg("-O-")
         .arg("--no-check-certificate").arg("--auth-no-challenge")
         .arg(format!("--http-user={}", user))
         .arg(format!("--http-password={}", password))
-        .arg(format!("{}/?token={}&cause=I+want+to+be+built", job_url, token))
+        .arg(format!("{}/?cause=I+want+to+be+built&RUN_TYPE={}", job_url, run_type))
         .current_dir("workspace/shurik")
         .output()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
         });
     let status = output.status;
+    let stdout = output.stdout;
+    let stdout = String::from_utf8_lossy(&stdout);
     let stderr = output.stderr;
     let stderr = String::from_utf8_lossy(&stderr);
     if ! ExitStatus::success(&status) {
-        panic!("Couldn't notify the Jenkins: {}", status)
+        panic!("Couldn't notify the Jenkins: {}. Standard output: {}. Standard error: {}", status, stdout, stderr);
     }
 
     info!("Notified the Jenkins");
