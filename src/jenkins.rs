@@ -11,7 +11,7 @@ pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str, run
         .arg("--no-check-certificate").arg("--auth-no-challenge")
         .arg(format!("--http-user={}", user))
         .arg(format!("--http-password={}", password))
-        .arg(format!("{}/?token={}&cause=I+want+to+be+built&RUN_TYPE={}", job_url, token, run_type))
+        .arg(format!("{}/?cause=I+want+to+be+built&RUN_TYPE={}", job_url, run_type))
         .current_dir("workspace/shurik")
         .output()
         .unwrap_or_else(|e| {
