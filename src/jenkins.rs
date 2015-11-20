@@ -5,13 +5,13 @@ use std::time::Duration;
 use ::std;
 use ::iron::*;
 
-pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str) -> String {
+pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str, run_type: &str) -> String {
     let output = Command::new("wget")
         .arg("-S").arg("-O-")
         .arg("--no-check-certificate").arg("--auth-no-challenge")
         .arg(format!("--http-user={}", user))
         .arg(format!("--http-password={}", password))
-        .arg(format!("{}/?token={}&cause=I+want+to+be+built", job_url, token))
+        .arg(format!("{}/?token={}&cause=I+want+to+be+built&RUN_TYPE={}", job_url, token, run_type))
         .current_dir("workspace/shurik")
         .output()
         .unwrap_or_else(|e| {
