@@ -268,7 +268,7 @@ fn handle_mr(
 }
 
 fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
-                  project: &Project)
+                  project_set: &ProjectSet)
                   -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
 
@@ -289,6 +289,9 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let user = obj.get("user").unwrap().as_object().unwrap();
     let username = user.get("username").unwrap().as_string().unwrap();
 
+    let project_id = json.lookup("object_attributes.project_id").unwrap().as_u64().unwrap();
+    let projects = project_set.projects;
+    let project = projects[&(project_id as i64)];
     let reviewers = &project.reviewers;
     let is_comment_author_reviewer = reviewers.iter().any(|s| s == username);
 
