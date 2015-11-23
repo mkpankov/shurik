@@ -198,7 +198,7 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
 fn handle_mr(
     req: &mut Request,
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
-    project: &Project)
+    project_set: &ProjectSet)
              -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
     let &(ref list, _) = queue;
@@ -218,8 +218,11 @@ fn handle_mr(
     }
     let project_id = json.lookup("object_attributes.target_project_id").unwrap().as_u64().unwrap();
 
-    if project_id != project.id as u64 {
-        error!("Project id mismatch. Handler is setup for {}, but webhook info has target_project_id {}", project.id, project_id);
+    let projects = project_set.projects;
+    let project_ids_iter = projects.keys();
+    if project_ids_iter.any(|x| *x as u64 == project_id) {
+        let project_ids: Vec<_> = projects.keys().collect();
+        error!("Project id mismatch. Handler is setup for project {:?}, but webhook info has target_project_id {}", project_ids, project_id);
     }
 
     let obj = json.as_object().unwrap();
@@ -637,61 +640,85 @@ fn main() {
     info!("GitLab port: {}", gitlab_port);
     info!("GitLab address: {}", gitlab_address);
 
-    let mut projects = HashMap::new();
-    for project_toml in config.lookup("project").unwrap().as_slice().unwrap() {
-        let key = project_toml.lookup("id").unwrap().as_integer().unwrap();
-        let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
-        let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
-        let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
-        let token = project_toml.lookup("token").unwrap().as_str().unwrap();
-        let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
+    let mut project_sets = HashMap::new();
 
-        let p = Project {
-            id: key,
-            workspace_dir: PathBuf::from(project_toml.lookup("workspace-dir").unwrap().as_str().unwrap()),
-            reviewers: string_vec,
-            token: token.to_owned(),
-            job_url: job_url.to_owned(),
-        };
-        projects.insert(key, p);
+    for project_set_toml in config.lookup("project_set").unwrap().as_slice().unwrap() {
+        let mut projects = HashMap::new();
+        let name = project_set_toml.lookup("name").unwrap().as_str().unwrap();
+
+        for project_toml in project_set_toml.lookup("project").unwrap().as_slice().unwrap() {
+            let key = project_toml.lookup("id").unwrap().as_integer().unwrap();
+            let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
+            let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
+            let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
+            let token = project_toml.lookup("token").unwrap().as_str().unwrap();
+            let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
+
+            let p = Project {
+                id: key,
+                workspace_dir: PathBuf::from(project_toml.lookup("workspace-dir").unwrap().as_str().unwrap()),
+                reviewers: string_vec,
+                token: token.to_owned(),
+                job_url: job_url.to_owned(),
+            };
+            projects.insert(key, p);
+        }
+        info!("Read projects: {:?}", projects);
+
+        let new_ps = ProjectSet { projects: projects };
+        let new_ps_copy = new_ps.clone();
+        if let Some(ps) = project_sets.insert(name, new_ps) {
+            panic!("Project set with name {} is already defined: {:?}. Attempted to define another project set with such name: {:?}. The name must be unique.", name, ps, new_ps_copy);
+        }
     }
-    info!("Read projects: {:?}", projects);
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
-    for (id, p) in projects {
+    let mut reverse_project_map = HashMap::new();
+
+    for (psid, project_set) in project_sets.into_iter() {
+        let projects = project_set.projects;
+        for (id, p) in projects {
+            if let Some(ps) = reverse_project_map.insert(id, psid) {
+                panic!("A project with id {}: {:?} is already present in project set with id {}: {:?}. Project can be present only in one project set.", id, p, psid, ps);
+            }
+        }
         let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
         let queue2 = queue.clone();
         let queue3 = queue.clone();
         let config2 = config.clone();
         let config3 = config2.clone();
-        let pa = Arc::new(p);
-        let pa2 = pa.clone();
-        let pa3 = pa.clone();
+        let psa = Arc::new(project_set);
+        let psa2 = psa.clone();
+        let psa3 = psa.clone();
 
-        router.post(format!("/api/v1/{}/mr", id),
+        router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
-                    handle_mr(req, &*queue2, &*pa3));
-        router.post(format!("/api/v1/{}/comment", id),
+                    handle_mr(req, &*queue2, &*psa3));
+        router.post(format!("/api/v1/{}/comment", psid),
                     move |req: &mut Request|
-                    handle_comment(req, &*queue3, &*pa));
+                    handle_comment(req, &*queue3, &*psa));
 
         let builder = thread::spawn(move || {
-            handle_build_request(&*queue, &*config3, &*pa2);
+            handle_build_request(&*queue, &*config3, &*psa2);
         });
         builders.push(builder);
     }
-
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Project {
     id: i64,
     workspace_dir: PathBuf,
     reviewers: Vec<String>,
     token: String,
     job_url: String,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectSet {
+    projects: HashMap<i64, Project>,
 }
