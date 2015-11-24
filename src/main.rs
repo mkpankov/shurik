@@ -218,8 +218,8 @@ fn handle_mr(
     }
     let project_id = json.lookup("object_attributes.target_project_id").unwrap().as_u64().unwrap();
 
-    let projects = project_set.projects;
-    let project_ids_iter = projects.keys();
+    let projects = &project_set.projects;
+    let mut project_ids_iter = projects.keys();
     if project_ids_iter.any(|x| *x as u64 == project_id) {
         let project_ids: Vec<_> = projects.keys().collect();
         error!("Project id mismatch. Handler is setup for project {:?}, but webhook info has target_project_id {}", project_ids, project_id);
@@ -290,8 +290,8 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let username = user.get("username").unwrap().as_string().unwrap();
 
     let project_id = json.lookup("object_attributes.project_id").unwrap().as_u64().unwrap();
-    let projects = project_set.projects;
-    let project = projects[&(project_id as i64)];
+    let projects = &project_set.projects;
+    let project = &projects[&(project_id as i64)];
     let reviewers = &project.reviewers;
     let is_comment_author_reviewer = reviewers.iter().any(|s| s == username);
 
@@ -368,14 +368,13 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 fn handle_build_request(
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     config: &toml::Value,
-    project: &Project) -> !
+    project_set: &ProjectSet) -> !
 {
     debug!("handle_build_request started : {}", time::precise_time_ns());
     let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
     let gitlab_password = config.lookup("gitlab.password").unwrap().as_str().unwrap();
     let gitlab_api_root = config.lookup("gitlab.url").unwrap().as_str().unwrap();
     let key_path = config.lookup("gitlab.ssh-key-path").unwrap().as_str().unwrap();
-    let workspace_dir = &project.workspace_dir.to_str().unwrap();
 
     let client = Client::new();
 
@@ -416,6 +415,9 @@ fn handle_build_request(
         let request_status = request.status;
         let ssh_url = request.ssh_url.clone();
         debug!("{:?}", request.status);
+        let projects = &project_set.projects;
+        let project = &projects[&(mr_id.target_project_id as i64)];
+        let workspace_dir = &project.workspace_dir.to_str().unwrap();
 
         if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
             continue;
@@ -678,9 +680,10 @@ fn main() {
     let mut router = router::Router::new();
     let mut builders = Vec::new();
     let mut reverse_project_map = HashMap::new();
+    let project_sets = Arc::new(project_sets);
 
-    for (psid, project_set) in project_sets.into_iter() {
-        let projects = project_set.projects;
+    for (psid, project_set) in (&*project_sets).into_iter() {
+        let projects = &project_set.projects;
         for (id, p) in projects {
             if let Some(ps) = reverse_project_map.insert(id, psid) {
                 panic!("A project with id {}: {:?} is already present in project set with id {}: {:?}. Project can be present only in one project set.", id, p, psid, ps);
