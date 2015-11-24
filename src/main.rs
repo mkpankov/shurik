@@ -617,6 +617,10 @@ fn main() {
     file.read_to_string(&mut toml).unwrap();
 
     let mut parser = toml::Parser::new(&toml);
+    let maybe_value = parser.parse();
+    if let None = maybe_value {
+        panic!("Couldn't parse config. Errors: {:?}", parser.errors);
+    }
     let value: toml::Value = toml::Value::Table(parser.parse().unwrap());
     let config: Arc<toml::Value> = Arc::new(value);
 
