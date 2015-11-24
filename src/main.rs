@@ -198,8 +198,9 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
 fn handle_mr(
     req: &mut Request,
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
-    project_set: &ProjectSet)
-             -> IronResult<Response> {
+    project_set: &ProjectSet,
+    linked_sets: &Mutex<HashMap<u64, LinkedSet>>)
+    -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
     let &(ref list, _) = queue;
     let ref mut body = req.body;
@@ -268,9 +269,17 @@ fn handle_mr(
     return Ok(Response::with(status::Ok));
 }
 
-fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
-                  project_set: &ProjectSet)
-                  -> IronResult<Response> {
+struct LinkedSet {
+    id: u64,
+    mrs: Vec<MergeRequest>,
+}
+
+fn handle_comment(
+    req: &mut Request,
+    queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
+    project_set: &ProjectSet,
+    linked_sets: &Mutex<HashMap<u64, LinkedSet>>)
+    -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
     info!("This thread handles projects: {:?}", project_set);
 
@@ -344,6 +353,15 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                               Status::Open(SubStatusOpen::WaitingForMerge)]);
                         new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
                         new_approval_status = Some(ApprovalStatus::Rejected);
+                    } else {
+                        info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
+                        return Ok(Response::with(status::Ok));
+                    }
+                    ;
+                },
+                "link:" | "связь:" => {
+                    if is_comment_author_reviewer {
+                        ;
                     } else {
                         info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
                         return Ok(Response::with(status::Ok));
@@ -681,6 +699,7 @@ fn main() {
             let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
             let token = project_toml.lookup("token").unwrap().as_str().unwrap();
             let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
+            let name = project_toml.lookup("name").unwrap().as_str().unwrap();
 
             let p = Project {
                 id: key,
@@ -688,6 +707,7 @@ fn main() {
                 reviewers: string_vec,
                 token: token.to_owned(),
                 job_url: job_url.to_owned(),
+                name: name.to_owned(),
             };
             projects.insert(key, p);
         }
@@ -721,12 +741,15 @@ fn main() {
         let psa2 = psa.clone();
         let psa3 = psa.clone();
 
+        let linked_sets = Arc::new(Mutex::new(HashMap::new()));
+        let ls2 = linked_sets.clone();
+
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
-                    handle_mr(req, &*queue2, &*psa3));
+                    handle_mr(req, &*queue2, &*psa3, &*linked_sets));
         router.post(format!("/api/v1/{}/comment", psid),
                     move |req: &mut Request|
-                    handle_comment(req, &*queue3, &*psa));
+                    handle_comment(req, &*queue3, &*psa, &*ls2));
 
         let builder = thread::spawn(move || {
             handle_build_request(&*queue, &*config3, &*psa2);
@@ -741,6 +764,7 @@ fn main() {
 #[derive(Debug, Clone)]
 struct Project {
     id: i64,
+    name: String,
     workspace_dir: PathBuf,
     reviewers: Vec<String>,
     token: String,
