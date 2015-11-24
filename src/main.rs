@@ -220,9 +220,10 @@ fn handle_mr(
 
     let projects = &project_set.projects;
     let mut project_ids_iter = projects.keys();
-    if project_ids_iter.any(|x| *x as u64 == project_id) {
+    if ! project_ids_iter.any(|x| *x as u64 == project_id) {
         let project_ids: Vec<_> = projects.keys().collect();
-        error!("Project id mismatch. Handler is setup for project {:?}, but webhook info has target_project_id {}", project_ids, project_id);
+        error!("Project id mismatch. Handler is setup for projects {:?}, but webhook info has target_project_id {}", project_ids, project_id);
+        return Ok(Response::with(status::Ok));
     }
 
     let obj = json.as_object().unwrap();
