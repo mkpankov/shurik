@@ -199,7 +199,7 @@ fn handle_mr(
     req: &mut Request,
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     project_set: &ProjectSet,
-    linked_sets: &Mutex<HashMap<u64, LinkedSet>>)
+    linked_sets: &Mutex<Vec<LinkedSetRequest>>)
     -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
     let &(ref list, _) = queue;
@@ -269,6 +269,12 @@ fn handle_mr(
     return Ok(Response::with(status::Ok));
 }
 
+struct LinkedSetRequest {
+    id: u64,
+    project_name: String,
+    mr_human_number: u64,
+}
+
 struct LinkedSet {
     id: u64,
     mrs: Vec<MergeRequest>,
@@ -278,7 +284,7 @@ fn handle_comment(
     req: &mut Request,
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     project_set: &ProjectSet,
-    linked_sets: &Mutex<HashMap<u64, LinkedSet>>)
+    linked_sets: &Mutex<Vec<LinkedSetRequest>>)
     -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
     info!("This thread handles projects: {:?}", project_set);
@@ -333,6 +339,7 @@ fn handle_comment(
     let mention = "@shurik ";
     let mention_len = mention.len();
     if note.len() >= mention.len() {
+        let command_span = (mention_len, note.len());
         if &note[0..mention_len] == mention {
             match &note[mention_len..] {
                 "r+" | "одобряю" => {
@@ -359,9 +366,24 @@ fn handle_comment(
                     }
                     ;
                 },
-                "link:" | "связь:" => {
+                command_name @ "link: " | command_name @ "связь: " => {
                     if is_comment_author_reviewer {
-                        ;
+                        let args_span = (mention_len + command_name.len(), note.len());
+                        let args_string = &note[args_span.0..args_span.1];
+                        let args: Vec<_> = args_string.split(",").collect();
+                        for arg in args {
+                            let components: Vec<_> = arg.split("/").collect();
+                            let project_name = components[0];
+                            let mr_human_number = components[1].parse().unwrap();
+                            let mut linked_sets = linked_sets.lock().unwrap();
+                            let id = linked_sets.len() as u64;
+                            linked_sets.push(
+                                LinkedSetRequest {
+                                    id: id,
+                                    project_name: project_name.to_owned(),
+                                    mr_human_number: mr_human_number,
+                                });
+                        }
                     } else {
                         info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
                         return Ok(Response::with(status::Ok));
@@ -741,7 +763,7 @@ fn main() {
         let psa2 = psa.clone();
         let psa3 = psa.clone();
 
-        let linked_sets = Arc::new(Mutex::new(HashMap::new()));
+        let linked_sets = Arc::new(Mutex::new(Vec::new()));
         let ls2 = linked_sets.clone();
 
         router.post(format!("/api/v1/{}/mr", psid),
