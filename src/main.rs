@@ -660,6 +660,9 @@ fn main() {
         for project_toml in project_set_toml.lookup("project").unwrap().as_slice().unwrap() {
             let key = project_toml.lookup("id").unwrap().as_integer().unwrap();
             let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
+            if toml_slice.len() == 0 {
+                panic!("Project has no reviewers! That would make it impossible to maintain it. Project in question: {:?}", project_toml);
+            }
             let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
             let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
             let token = project_toml.lookup("token").unwrap().as_str().unwrap();
