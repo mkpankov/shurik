@@ -295,72 +295,86 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let projects = &project_set.projects;
     let project = &projects[&(project_id as i64)];
     let reviewers = &project.reviewers;
+
+    let is_comment_author_self = "shurik" == username;
+
+    if is_comment_author_self {
+        info!("Got comment from myself ({}), not handling.", username);
+        return Ok(Response::with(status::Ok));
+    }
+
     let is_comment_author_reviewer = reviewers.iter().any(|s| s == username);
 
-    if is_comment_author_reviewer {
-        let &(ref list, ref cvar) = queue;
+    let &(ref list, ref cvar) = queue;
 
-        let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap().to_owned();
-        let target_project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
-        let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
-        let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
-        let ssh_url = json.lookup("merge_request.target.ssh_url").unwrap().as_string().unwrap();
-        // This is unused as we only handle comments that are issued by reviewer
+    let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap().to_owned();
+    let target_project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
+    let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
+    let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
+    let ssh_url = json.lookup("merge_request.target.ssh_url").unwrap().as_string().unwrap();
+    // This is unused as we only handle comments that are issued by reviewer
 
-        let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
-        let note = attrs.get("note").unwrap().as_string().unwrap();
-        let mut old_statuses = Vec::new();
-        let mut new_status = None;
-        let mut new_approval_status = None;
-        let mut needs_notification = false;
+    let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
+    let note = attrs.get("note").unwrap().as_string().unwrap();
+    let mut old_statuses = Vec::new();
+    let mut new_status = None;
+    let mut new_approval_status = None;
+    let mut needs_notification = false;
 
-        let mention = "@shurik ";
-        let mention_len = mention.len();
-        if note.len() >= mention.len() {
-            if &note[0..mention_len] == mention {
-                match &note[mention_len..] {
-                    "r+" | "одобряю" => {
+    let mention = "@shurik ";
+    let mention_len = mention.len();
+    if note.len() >= mention.len() {
+        if &note[0..mention_len] == mention {
+            match &note[mention_len..] {
+                "r+" | "одобряю" => {
+                    if is_comment_author_reviewer {
                         old_statuses.push(Status::Open(SubStatusOpen::WaitingForReview));
                         new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
                         new_approval_status = Some(ApprovalStatus::Approved);
                         needs_notification = true;
-                    },
-                    "r-" | "отказываю" => {
+                    } else {
+                        info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
+                        return Ok(Response::with(status::Ok));
+                    }
+                },
+                "r-" | "отказываю" => {
+                    if is_comment_author_reviewer {
                         old_statuses.extend(
                             &[Status::Open(SubStatusOpen::WaitingForCi),
                               Status::Open(SubStatusOpen::WaitingForMerge)]);
                         new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
                         new_approval_status = Some(ApprovalStatus::Rejected);
-                        ;
-                    },
-                    "try" | "попробуй" => {
-                        new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
-                        needs_notification = true;
-                    },
-                    _ => {
-                        warn!("Unknown command: {}", &note[mention_len..]);
+                    } else {
+                        info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
                         return Ok(Response::with(status::Ok));
                     }
+                    ;
+                },
+                "try" | "попробуй" => {
+                    new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
+                    needs_notification = true;
+                },
+                _ => {
+                    warn!("Unknown command: {}", &note[mention_len..]);
+                    return Ok(Response::with(status::Ok));
                 }
             }
         }
-        update_or_create_mr(
-            &mut *list.lock().unwrap(),
-            MrUid { target_project_id: target_project_id, id: mr_id },
-            ssh_url,
-            mr_human_number,
-            &old_statuses,
-            Some(&last_commit_id),
-            new_status,
-            new_approval_status,
-            None,
-            );
-        if needs_notification {
-            cvar.notify_one();
-            info!("Notified...");
-        }
-    } else {
-        info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
+    }
+    update_or_create_mr(
+        &mut *list.lock().unwrap(),
+        MrUid { target_project_id: target_project_id, id: mr_id },
+        ssh_url,
+        mr_human_number,
+        &old_statuses,
+        Some(&last_commit_id),
+        new_status,
+        new_approval_status,
+        None,
+        );
+    if needs_notification {
+        cvar.notify_one();
+        info!("Notified...");
     }
 
     debug!("handle_comment finished      : {}", time::precise_time_ns());
