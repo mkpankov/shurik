@@ -272,6 +272,7 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                   project_set: &ProjectSet)
                   -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
+    info!("This thread handles projects: {:?}", project_set);
 
     debug!("{}", req.url);
     let mut s: String = String::new();
@@ -687,6 +688,7 @@ fn main() {
     let mut reverse_project_map = HashMap::new();
 
     for (psid, project_set) in project_sets.into_iter() {
+        debug!("Handling ProjectSet: {} = {:?}", psid, project_set);
         let psa = Arc::new(project_set);
         let projects = &psa.clone().projects;
         for (id, p) in projects {
