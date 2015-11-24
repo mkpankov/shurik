@@ -295,6 +295,14 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
     let projects = &project_set.projects;
     let project = &projects[&(project_id as i64)];
     let reviewers = &project.reviewers;
+
+    let is_comment_author_self = "shurik" == username;
+
+    if is_comment_author_self {
+        info!("Got comment from myself ({}), not handling.", username);
+        return Ok(Response::with(status::Ok));
+    }
+
     let is_comment_author_reviewer = reviewers.iter().any(|s| s == username);
 
     let &(ref list, ref cvar) = queue;
