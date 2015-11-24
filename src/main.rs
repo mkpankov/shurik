@@ -621,7 +621,7 @@ fn main() {
     if let None = maybe_value {
         panic!("Couldn't parse config. Errors: {:?}", parser.errors);
     }
-    let value: toml::Value = toml::Value::Table(parser.parse().unwrap());
+    let value: toml::Value = toml::Value::Table(maybe_value.unwrap());
     let config: Arc<toml::Value> = Arc::new(value);
 
     debug!("Dry run: {}", matches.is_present("dry-run"));
