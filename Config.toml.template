@@ -14,15 +14,15 @@ ssh-key-path = "/path/to/private/ssh/key/of/shurik/for/gitlab"
 user = "foobar"
 password = "foobar_api_token"
 
-[[projectset]]
+[[project-set]]
 
-[[project]]
+[[project-set.project]]
 workspace-dir = "/path/to/shurik/workspace/project_name"
 reviewers = [ "foobaz_gitlab_login" ]
 token = "build_token_from_jenkins_for_project"
 job-url = "https://hudson.host/jenkins/job/project_name/build"
 
-[[project]]
+[[project-set.project]]
 workspace-dir = "/path/to/shurik/workspace/another_project_name"
 reviewers = [ "barbar_gitlab_login" ]
 token = "build_token_from_jenkins_for_another_project"

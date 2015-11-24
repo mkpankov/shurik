@@ -651,7 +651,7 @@ fn main() {
 
     let mut project_sets = HashMap::new();
 
-    for project_set_toml in config.lookup("project_set").unwrap().as_slice().unwrap() {
+    for project_set_toml in config.lookup("project-set").unwrap().as_slice().unwrap() {
         let mut projects = HashMap::new();
         let name = project_set_toml.lookup("name").unwrap().as_str().unwrap();
 
