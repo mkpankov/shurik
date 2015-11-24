@@ -680,12 +680,12 @@ fn main() {
     let mut router = router::Router::new();
     let mut builders = Vec::new();
     let mut reverse_project_map = HashMap::new();
-    let project_sets = Arc::new(project_sets);
 
-    for (psid, project_set) in (&*project_sets).into_iter() {
-        let projects = &project_set.projects;
+    for (psid, project_set) in project_sets.into_iter() {
+        let psa = Arc::new(project_set);
+        let projects = &psa.clone().projects;
         for (id, p) in projects {
-            if let Some(ps) = reverse_project_map.insert(id, psid) {
+            if let Some(ps) = reverse_project_map.insert(id.clone(), psid) {
                 panic!("A project with id {}: {:?} is already present in project set with id {}: {:?}. Project can be present only in one project set.", id, p, psid, ps);
             }
         }
@@ -694,7 +694,6 @@ fn main() {
         let queue3 = queue.clone();
         let config2 = config.clone();
         let config3 = config2.clone();
-        let psa = Arc::new(project_set);
         let psa2 = psa.clone();
         let psa3 = psa.clone();
 
