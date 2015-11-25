@@ -576,8 +576,7 @@ fn handle_build_request(
 
         if result_string == "SUCCESS" {
             let &(ref mutex, _) = queue;
-            let list = &mut *mutex.lock().unwrap();
-            if let Some(new_request) = find_mr_mut(list, mr_id)
+            if let Some(new_request) = find_mr_mut(&mut *mutex.lock().unwrap(), mr_id)
             {
                 if new_request.checkout_sha == request.checkout_sha {
                     if new_request.approval_status != ApprovalStatus::Approved {
@@ -595,7 +594,6 @@ fn handle_build_request(
                     continue;
                 }
             }
-            drop(list);
             assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
             if request.approval_status == ApprovalStatus::Approved {
                 info!("Merging");
