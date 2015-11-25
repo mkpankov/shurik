@@ -121,31 +121,6 @@ struct LinkedSet {
     mrs: Vec<MergeRequest>,
 }
 
-#[allow(unused)]
-fn find_mr(list: &LinkedList<MergeRequest>, id: MrUid) -> Option<&MergeRequest> {
-    for i in list.iter() {
-        if i.id.target_project_id == id.target_project_id
-            && i.id.id == id.id
-        {
-            debug!("{:?}", i);
-            return Some(i);
-        }
-    }
-    None
-}
-
-fn find_mr_mut(list: &mut LinkedList<MergeRequest>, id: MrUid) -> Option<&mut MergeRequest> {
-    for i in list.iter_mut() {
-        if i.id.target_project_id == id.target_project_id
-            && i.id.id == id.id
-        {
-            debug!("{:?}", i);
-            return Some(i);
-        }
-    }
-    None
-}
-
 struct MergeRequestBuilder {
     id: MrUid,
     ssh_url: String,
@@ -539,7 +514,7 @@ fn handle_build_request(
         }
         info!("{:?}", &*list);
 
-        let mut request = list.pop_front().unwrap();
+        let request = list.pop_front().unwrap();
         info!("Got the request: {:?}", request);
 
         let arg = request.checkout_sha.clone();
@@ -601,7 +576,6 @@ fn handle_build_request(
         info!("Result: {}", result_string);
 
         if result_string == "SUCCESS" {
-            let &(ref mutex, _) = queue;
             if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id)
             {
                 if new_request.checkout_sha == request.checkout_sha {
@@ -623,7 +597,7 @@ fn handle_build_request(
             let mut do_merge = false;
             {
                 let mut mr_storage_locked = mr_storage.lock().unwrap();
-                let mut request = mr_storage_locked.get_mut(&mr_id).unwrap();
+                let request = mr_storage_locked.get_mut(&mr_id).unwrap();
                 assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
                 if request.approval_status == ApprovalStatus::Approved {
                     do_merge = true;
