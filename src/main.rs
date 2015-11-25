@@ -291,17 +291,17 @@ fn handle_mr(
         }
     }
     {
-        let new_id = MrUid { target_project_id: target_project_id, id: mr_id };
-        let new_mr = MergeRequest {
-            id: new_id,
-            human_number: mr_human_number,
-            ssh_url: ssh_url.to_owned(),
-            checkout_sha: checkout_sha.to_owned(),
-            status: new_status,
-            approval_status: ApprovalStatus::Pending,
-            merge_status: merge_status,
-        };
-        mr_storage.lock().unwrap().insert(new_id, new_mr);
+        update_or_create_mr(
+            &mut *mr_storage.lock().unwrap(),
+            MrUid { target_project_id: target_project_id, id: mr_id },
+            ssh_url,
+            mr_human_number,
+            &[],
+            Some(checkout_sha),
+            Some(new_status),
+            Some(ApprovalStatus::Pending),
+            Some(merge_status)
+            );
     }
 
     debug!("handle_mr finished           : {}", time::precise_time_ns());
