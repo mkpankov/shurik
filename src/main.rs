@@ -508,6 +508,7 @@ fn handle_build_request(
 
         let list_copy = list.clone();
         debug!("List copy: {:?}", list_copy);
+        drop(list);
 
         let arg = request.checkout_sha.clone();
         let mr_id = request.id;
@@ -530,7 +531,6 @@ fn handle_build_request(
         if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
             continue;
         }
-        drop(list);
 
         let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
