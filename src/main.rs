@@ -787,9 +787,9 @@ fn main() {
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
-    let mut reverse_project_map = HashMap::new();
 
     for (psid, project_set) in project_sets.into_iter() {
+        let mut reverse_project_map = HashMap::new();
         debug!("Handling ProjectSet: {} = {:?}", psid, project_set);
         let psa = Arc::new(project_set);
         let projects = &psa.clone().projects;
