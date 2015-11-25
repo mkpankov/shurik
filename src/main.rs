@@ -72,6 +72,7 @@ struct WorkerTask {
     ssh_url: String,
     checkout_sha: String,
     job_type: JobType,
+    approval_status: ApprovalStatus,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -461,6 +462,7 @@ fn handle_comment(
                 ssh_url: ssh_url.to_owned(),
                 checkout_sha: last_commit_id,
                 job_type: job_type,
+                approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
             };
 
             let &(ref list, ref cvar) = worker_queue;
@@ -579,7 +581,9 @@ fn handle_build_request(
             if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id)
             {
                 if new_request.checkout_sha == request.checkout_sha {
-                    if new_request.approval_status != ApprovalStatus::Approved {
+                    if request.approval_status != new_request.approval_status
+                        && new_request.approval_status != ApprovalStatus::Approved
+                    {
                         info!("The MR was rejected in the meantime, not merging");
                         let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, коммит запретили. Не сливаю\"}}");
                         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
