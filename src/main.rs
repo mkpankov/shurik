@@ -790,7 +790,9 @@ fn main() {
 
     for (psid, project_set) in project_sets.into_iter() {
         let mut reverse_project_map = HashMap::new();
+
         debug!("Handling ProjectSet: {} = {:?}", psid, project_set);
+
         let psa = Arc::new(project_set);
         let projects = &psa.clone().projects;
         for (id, p) in projects {
@@ -801,10 +803,13 @@ fn main() {
         let mr_storage = Arc::new(Mutex::new(HashMap::new()));
         let mrs2 = mr_storage.clone();
         let mrs3 = mrs2.clone();
+
         let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
         let queue3 = queue.clone();
+
         let config2 = config.clone();
         let config3 = config2.clone();
+
         let psa2 = psa.clone();
         let psa3 = psa.clone();
 
