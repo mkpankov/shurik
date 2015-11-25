@@ -71,6 +71,33 @@ pub struct MrUid {
     id: u64,
 }
 
+#[derive(Debug, Clone)]
+struct Project {
+    id: i64,
+    name: String,
+    workspace_dir: PathBuf,
+    reviewers: Vec<String>,
+    token: String,
+    job_url: String,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectSet {
+    projects: HashMap<i64, Project>,
+}
+
+#[derive(Debug)]
+struct LinkedSetRequest {
+    id: u64,
+    project_name: String,
+    mr_human_number: u64,
+}
+
+struct LinkedSet {
+    id: u64,
+    mrs: Vec<MergeRequest>,
+}
+
 #[allow(unused)]
 fn find_mr(list: &LinkedList<MergeRequest>, id: MrUid) -> Option<&MergeRequest> {
     for i in list.iter() {
@@ -199,7 +226,7 @@ fn handle_mr(
     req: &mut Request,
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     project_set: &ProjectSet,
-    linked_sets: &Mutex<Vec<LinkedSetRequest>>)
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
     -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
     let &(ref list, _) = queue;
@@ -232,6 +259,7 @@ fn handle_mr(
     let last_commit = attrs.get("last_commit").unwrap().as_object().unwrap();
     let checkout_sha = last_commit.get("id").unwrap().as_string().unwrap();
     let target_project_id = attrs.get("target_project_id").unwrap().as_u64().unwrap();
+    let target_project_name = json.lookup("object_attributes.target.name").unwrap().as_string().unwrap();
     let mr_human_number = attrs.get("iid").unwrap().as_u64().unwrap();
     let mr_id = attrs.get("id").unwrap().as_u64().unwrap();
     let action = json.lookup("object_attributes.action").unwrap().as_string().unwrap();
@@ -250,6 +278,13 @@ fn handle_mr(
         _ => MergeStatus::CanNotBeMerged,
     };
 
+    for linked_set_request in &*linked_set_requests.lock().unwrap() {
+        if target_project_name == linked_set_request.project_name
+            && mr_human_number == linked_set_request.mr_human_number
+        {
+            // TODO
+        }
+    }
     {
         let mut list = list.lock().unwrap();
         update_or_create_mr(
@@ -269,22 +304,11 @@ fn handle_mr(
     return Ok(Response::with(status::Ok));
 }
 
-struct LinkedSetRequest {
-    id: u64,
-    project_name: String,
-    mr_human_number: u64,
-}
-
-struct LinkedSet {
-    id: u64,
-    mrs: Vec<MergeRequest>,
-}
-
 fn handle_comment(
     req: &mut Request,
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     project_set: &ProjectSet,
-    linked_sets: &Mutex<Vec<LinkedSetRequest>>)
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
     -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
     info!("This thread handles projects: {:?}", project_set);
@@ -339,7 +363,6 @@ fn handle_comment(
     let mention = "@shurik ";
     let mention_len = mention.len();
     if note.len() >= mention.len() {
-        let command_span = (mention_len, note.len());
         if &note[0..mention_len] == mention {
             match &note[mention_len..] {
                 "r+" | "одобряю" => {
@@ -375,7 +398,7 @@ fn handle_comment(
                             let components: Vec<_> = arg.split("/").collect();
                             let project_name = components[0];
                             let mr_human_number = components[1].parse().unwrap();
-                            let mut linked_sets = linked_sets.lock().unwrap();
+                            let mut linked_sets = linked_set_requests.lock().unwrap();
                             let id = linked_sets.len() as u64;
                             linked_sets.push(
                                 LinkedSetRequest {
@@ -384,6 +407,7 @@ fn handle_comment(
                                     mr_human_number: mr_human_number,
                                 });
                         }
+                        println!("{:?}", linked_set_requests);
                     } else {
                         info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
                         return Ok(Response::with(status::Ok));
@@ -781,19 +805,4 @@ fn main() {
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
-}
-
-#[derive(Debug, Clone)]
-struct Project {
-    id: i64,
-    name: String,
-    workspace_dir: PathBuf,
-    reviewers: Vec<String>,
-    token: String,
-    job_url: String,
-}
-
-#[derive(Debug, Clone)]
-struct ProjectSet {
-    projects: HashMap<i64, Project>,
 }
