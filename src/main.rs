@@ -305,10 +305,16 @@ fn handle_mr(
             // TODO
         }
     }
+    let id = MrUid { target_project_id: target_project_id, id: mr_id };
+    if let Status::Open(_) = new_status {
+        ;
+    } else {
+        mr_storage.lock().unwrap().remove(&id);
+    }
     {
         update_or_create_mr(
             &mut *mr_storage.lock().unwrap(),
-            MrUid { target_project_id: target_project_id, id: mr_id },
+            id,
             ssh_url,
             mr_human_number,
             &[],
