@@ -568,13 +568,13 @@ fn handle_build_request(
         } else {
             "try"
         };
-        let queue_url = jenkins::enqueue_build(http_user, http_password, jenkins_job_url, token, run_type);
+        let queue_url = jenkins::enqueue_build(workspace_dir, http_user, http_password, jenkins_job_url, token, run_type);
         info!("Queue item URL: {}", queue_url);
 
-        let build_url = jenkins::poll_queue(http_user, http_password, &queue_url);
+        let build_url = jenkins::poll_queue(workspace_dir, http_user, http_password, &queue_url);
         info!("Build job URL: {}", queue_url);
 
-        let result_string = jenkins::poll_build(http_user, http_password, &build_url);
+        let result_string = jenkins::poll_build(workspace_dir, http_user, http_password, &build_url);
         info!("Result: {}", result_string);
 
         if result_string == "SUCCESS" {
