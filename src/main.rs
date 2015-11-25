@@ -65,35 +65,61 @@ struct MergeRequest {
     merge_status: MergeStatus,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
+struct WorkerTask {
+    id: MrUid,
+    human_number: u64,
+    ssh_url: String,
+    checkout_sha: String,
+    job_type: JobType,
+    approval_status: ApprovalStatus,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum JobType {
+    Try,
+    Merge
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MrUid {
     target_project_id: u64,
     id: u64,
 }
 
-#[allow(unused)]
-fn find_mr(list: &LinkedList<MergeRequest>, id: MrUid) -> Option<&MergeRequest> {
-    for i in list.iter() {
-        if i.id.target_project_id == id.target_project_id
-            && i.id.id == id.id
-        {
-            debug!("{:?}", i);
-            return Some(i);
-        }
-    }
-    None
+#[derive(Debug, Clone)]
+struct Project {
+    id: i64,
+    name: String,
+    workspace_dir: PathBuf,
+    reviewers: Vec<String>,
+    token: String,
+    job_url: String,
 }
 
-fn find_mr_mut(list: &mut LinkedList<MergeRequest>, id: MrUid) -> Option<&mut MergeRequest> {
-    for i in list.iter_mut() {
-        if i.id.target_project_id == id.target_project_id
-            && i.id.id == id.id
-        {
-            debug!("{:?}", i);
-            return Some(i);
-        }
-    }
-    None
+#[derive(Debug, Clone)]
+struct ProjectSet {
+    projects: HashMap<i64, Project>,
+}
+
+#[derive(Debug)]
+struct LinkedSetRequest {
+    id: u64,
+    project_name: String,
+    mr_human_number: u64,
+    links: Vec<MrLinkHuman>,
+    source_comment_url: String,
+}
+
+#[derive(Debug)]
+struct MrLinkHuman {
+    project_name: String,
+    mr_human_number: u64,
+}
+
+struct LinkedSet {
+    id: u64,
+    mrs: Vec<MergeRequest>,
 }
 
 struct MergeRequestBuilder {
@@ -151,7 +177,7 @@ impl MergeRequestBuilder {
     }
 }
 
-fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
+fn update_or_create_mr(storage: &mut HashMap<MrUid, MergeRequest>,
                        id: MrUid,
                        ssh_url: &str,
                        human_number: u64,
@@ -160,9 +186,7 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
                        new_status: Option<Status>,
                        new_approval_status: Option<ApprovalStatus>,
                        new_merge_status: Option<MergeStatus>) {
-    if let Some(mut existing_mr) =
-        find_mr_mut(&mut *list, id)
-    {
+    if let Some(mut existing_mr) = storage.get_mut(&id) {
         if old_statuses.iter().any(|x| *x == existing_mr.status)
             || old_statuses.len() == 0
         {
@@ -191,17 +215,17 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
         .build()
         .unwrap();
 
-    list.push_back(incoming);
-    info!("Queued up MR: {:?}", list.back());
+    storage.insert(id, incoming);
+    info!("Added MR: {:?}", storage[&id]);
 }
 
 fn handle_mr(
     req: &mut Request,
-    queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
-    project_set: &ProjectSet)
-             -> IronResult<Response> {
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    project_set: &ProjectSet,
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
+    -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
-    let &(ref list, _) = queue;
     let ref mut body = req.body;
     let mut s: String = String::new();
     body.read_to_string(&mut s).unwrap();
@@ -231,6 +255,7 @@ fn handle_mr(
     let last_commit = attrs.get("last_commit").unwrap().as_object().unwrap();
     let checkout_sha = last_commit.get("id").unwrap().as_string().unwrap();
     let target_project_id = attrs.get("target_project_id").unwrap().as_u64().unwrap();
+    let target_project_name = json.lookup("object_attributes.target.name").unwrap().as_string().unwrap();
     let mr_human_number = attrs.get("iid").unwrap().as_u64().unwrap();
     let mr_id = attrs.get("id").unwrap().as_u64().unwrap();
     let action = json.lookup("object_attributes.action").unwrap().as_string().unwrap();
@@ -249,11 +274,23 @@ fn handle_mr(
         _ => MergeStatus::CanNotBeMerged,
     };
 
+    for linked_set_request in &*linked_set_requests.lock().unwrap() {
+        if target_project_name == linked_set_request.project_name
+            && mr_human_number == linked_set_request.mr_human_number
+        {
+            // TODO
+        }
+    }
+    let id = MrUid { target_project_id: target_project_id, id: mr_id };
+    if let Status::Open(_) = new_status {
+        ;
+    } else {
+        mr_storage.lock().unwrap().remove(&id);
+    }
     {
-        let mut list = list.lock().unwrap();
         update_or_create_mr(
-            &mut *list,
-            MrUid { target_project_id: target_project_id, id: mr_id },
+            &mut *mr_storage.lock().unwrap(),
+            id,
             ssh_url,
             mr_human_number,
             &[],
@@ -268,9 +305,13 @@ fn handle_mr(
     return Ok(Response::with(status::Ok));
 }
 
-fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
-                  project_set: &ProjectSet)
-                  -> IronResult<Response> {
+fn handle_comment(
+    req: &mut Request,
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    worker_queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
+    project_set: &ProjectSet,
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
+    -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
     info!("This thread handles projects: {:?}", project_set);
 
@@ -305,10 +346,9 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 
     let is_comment_author_reviewer = reviewers.iter().any(|s| s == username);
 
-    let &(ref list, ref cvar) = queue;
-
     let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap().to_owned();
     let target_project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
+    let target_project_name = json.lookup("merge_request.target.name").unwrap().as_string().unwrap();
     let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
     let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
     let ssh_url = json.lookup("merge_request.target.ssh_url").unwrap().as_string().unwrap();
@@ -316,6 +356,8 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 
     let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
     let note = attrs.get("note").unwrap().as_string().unwrap();
+    let comment_url = json.lookup("object_attributes.url").unwrap().as_string().unwrap();
+
     let mut old_statuses = Vec::new();
     let mut new_status = None;
     let mut new_approval_status = None;
@@ -350,6 +392,39 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
                     }
                     ;
                 },
+                command_name @ "link: " | command_name @ "связь: " => {
+                    if is_comment_author_reviewer {
+                        let args_span = (mention_len + command_name.len(), note.len());
+                        let args_string = &note[args_span.0..args_span.1];
+                        let args: Vec<_> = args_string.split(",").collect();
+                        let mut links = Vec::new();
+                        for arg in args {
+                            let components: Vec<_> = arg.split("/").collect();
+                            let project_name = components[0];
+                            let mr_human_number = components[1].parse().unwrap();
+                            let mr_link_human = MrLinkHuman {
+                                project_name: project_name.to_owned(),
+                                mr_human_number: mr_human_number,
+                            };
+                            links.push(mr_link_human);
+                        }
+                        let mut linked_sets = linked_set_requests.lock().unwrap();
+                        let id = linked_sets.len() as u64;
+                        linked_sets.push(
+                            LinkedSetRequest {
+                                id: id,
+                                project_name: target_project_name.to_owned(),
+                                mr_human_number: mr_human_number,
+                                links: links,
+                                source_comment_url: comment_url.to_owned(),
+                            });
+                        println!("{:?}", linked_set_requests);
+                    } else {
+                        info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
+                        return Ok(Response::with(status::Ok));
+                    }
+                    ;
+                },
                 "try" | "попробуй" => {
                     new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
                     needs_notification = true;
@@ -361,20 +436,40 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
             }
         }
     }
-    update_or_create_mr(
-        &mut *list.lock().unwrap(),
-        MrUid { target_project_id: target_project_id, id: mr_id },
-        ssh_url,
-        mr_human_number,
-        &old_statuses,
-        Some(&last_commit_id),
-        new_status,
-        new_approval_status,
-        None,
-        );
-    if needs_notification {
-        cvar.notify_one();
-        info!("Notified...");
+    {
+        let id = MrUid { target_project_id: target_project_id, id: mr_id };
+        update_or_create_mr(
+            &mut *mr_storage.lock().unwrap(),
+            id,
+            ssh_url,
+            mr_human_number,
+            &old_statuses,
+            Some(&last_commit_id),
+            new_status,
+            new_approval_status,
+            None,
+            );
+
+
+        if needs_notification {
+            let job_type = match new_approval_status {
+                Some(ApprovalStatus::Approved) => JobType::Merge,
+                _ => JobType::Try,
+            };
+            let new_task = WorkerTask {
+                id: id,
+                human_number: mr_human_number,
+                ssh_url: ssh_url.to_owned(),
+                checkout_sha: last_commit_id,
+                job_type: job_type,
+                approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
+            };
+
+            let &(ref list, ref cvar) = worker_queue;
+            list.lock().unwrap().push_back(new_task);
+            cvar.notify_one();
+            info!("Notified...");
+        }
     }
 
     debug!("handle_comment finished      : {}", time::precise_time_ns());
@@ -382,9 +477,11 @@ fn handle_comment(req: &mut Request, queue: &(Mutex<LinkedList<MergeRequest>>, C
 }
 
 fn handle_build_request(
-    queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     config: &toml::Value,
-    project_set: &ProjectSet) -> !
+    project_set: &ProjectSet,
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>) -> !
 {
     debug!("handle_build_request started : {}", time::precise_time_ns());
     let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
@@ -419,26 +516,24 @@ fn handle_build_request(
         }
         info!("{:?}", &*list);
 
-        let mut request = list.pop_front().unwrap();
+        let request = list.pop_front().unwrap();
         info!("Got the request: {:?}", request);
-
-        let list_copy = list.clone();
-        debug!("List copy: {:?}", list_copy);
 
         let arg = request.checkout_sha.clone();
         let mr_id = request.id;
         let mr_human_number = request.human_number;
-        let request_status = request.status;
         let ssh_url = request.ssh_url.clone();
-        debug!("{:?}", request.status);
         let projects = &project_set.projects;
         let project = &projects[&(mr_id.target_project_id as i64)];
         let workspace_dir = &project.workspace_dir.to_str().unwrap();
 
-        if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
-            continue;
+        for lsr in &*linked_set_requests.lock().unwrap() {
+            if project.name == lsr.project_name
+                && mr_human_number == lsr.mr_human_number
+            {
+                ;
+            }
         }
-        drop(list);
 
         let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
@@ -468,7 +563,7 @@ fn handle_build_request(
         let jenkins_job_url = &project.job_url;
         debug!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
 
-        let run_type = if request.approval_status == ApprovalStatus::Approved {
+        let run_type = if request.job_type == JobType::Merge {
             "deploy"
         } else {
             "try"
@@ -483,12 +578,12 @@ fn handle_build_request(
         info!("Result: {}", result_string);
 
         if result_string == "SUCCESS" {
-            let &(ref mutex, _) = queue;
-            let list = &mut *mutex.lock().unwrap();
-            if let Some(new_request) = find_mr_mut(list, mr_id)
+            if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id)
             {
                 if new_request.checkout_sha == request.checkout_sha {
-                    if new_request.approval_status != ApprovalStatus::Approved {
+                    if request.approval_status != new_request.approval_status
+                        && new_request.approval_status != ApprovalStatus::Approved
+                    {
                         info!("The MR was rejected in the meantime, not merging");
                         let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, коммит запретили. Не сливаю\"}}");
                         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
@@ -503,13 +598,24 @@ fn handle_build_request(
                     continue;
                 }
             }
-            drop(list);
-            assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
-            if request.approval_status == ApprovalStatus::Approved {
+            let mut do_merge = false;
+            {
+                let mut mr_storage_locked = mr_storage.lock().unwrap();
+                let request = mr_storage_locked.get_mut(&mr_id).unwrap();
+                assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
+                if request.approval_status == ApprovalStatus::Approved {
+                    do_merge = true;
+                }
+            }
+            if do_merge {
                 info!("Merging");
                 let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-                request.status = Status::Open(SubStatusOpen::WaitingForMerge);
+                {
+                    let mut mr_storage_locked = mr_storage.lock().unwrap();
+                    let mut request = mr_storage_locked.get_mut(&mr_id).unwrap();
+                    request.status = Status::Open(SubStatusOpen::WaitingForMerge);
+                }
                 git::checkout(workspace_dir, "master");
                 match git::merge(workspace_dir, "try", mr_human_number, true) {
                     Ok(_) => {},
@@ -521,12 +627,16 @@ fn handle_build_request(
                 }
                 git::status(workspace_dir);
                 git::push(workspace_dir, key_path, false);
-                request.status = Status::Merged;
+                {
+                    let mut mr_storage_locked = mr_storage.lock().unwrap();
+                    // MR was merged, removing
+                    mr_storage_locked.remove(&mr_id);
+                }
                 info!("Updated existing MR");
                 let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
-                for mr in list_copy.iter() {
+                for mr in mr_storage.lock().unwrap().values() {
                     info!("MR to try merge: {:?}", mr);
                     git::set_remote_url(workspace_dir, &ssh_url);
                     git::set_user(workspace_dir, "Shurik", "shurik@example.com");
@@ -535,33 +645,6 @@ fn handle_build_request(
                 continue;
             }
         }
-        let &(ref mutex, _) = queue;
-        let list = &mut *mutex.lock().unwrap();
-        let mut need_push_back = false;
-        {
-            if let Some(new_request) = find_mr_mut(list, mr_id)
-            {
-                if new_request.checkout_sha != request.checkout_sha
-                    || new_request.approval_status != request.approval_status
-                {
-                    info!("The MR was updated, discarding this one");
-                } else {
-                    info!("Pushing back old MR");
-                    request.status = Status::Open(SubStatusOpen::WaitingForReview);
-                    need_push_back = true;
-                }
-            } else {
-                info!("Push back old MR and setting it for review");
-                request.status = Status::Open(SubStatusOpen::WaitingForReview);
-                need_push_back = true;
-            }
-        }
-        let mr_id = request.id.clone();
-        if need_push_back {
-            list.push_back(request);
-        }
-        info!("{:?}", &*list);
-        drop(list);
 
         let build_result_message = match &*result_string {
             "SUCCESS" => "успешно",
@@ -681,6 +764,7 @@ fn main() {
             let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
             let token = project_toml.lookup("token").unwrap().as_str().unwrap();
             let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
+            let name = project_toml.lookup("name").unwrap().as_str().unwrap();
 
             let p = Project {
                 id: key,
@@ -688,6 +772,7 @@ fn main() {
                 reviewers: string_vec,
                 token: token.to_owned(),
                 job_url: job_url.to_owned(),
+                name: name.to_owned(),
             };
             projects.insert(key, p);
         }
@@ -713,41 +798,33 @@ fn main() {
                 panic!("A project with id {}: {:?} is already present in project set with id {}: {:?}. Project can be present only in one project set.", id, p, psid, ps);
             }
         }
+        let mr_storage = Arc::new(Mutex::new(HashMap::new()));
+        let mrs2 = mr_storage.clone();
+        let mrs3 = mrs2.clone();
         let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
-        let queue2 = queue.clone();
         let queue3 = queue.clone();
         let config2 = config.clone();
         let config3 = config2.clone();
         let psa2 = psa.clone();
         let psa3 = psa.clone();
 
+        let linked_set_requests = Arc::new(Mutex::new(Vec::new()));
+        let lsr2 = linked_set_requests.clone();
+        let lsr3 = lsr2.clone();
+
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
-                    handle_mr(req, &*queue2, &*psa3));
+                    handle_mr(req, &*mr_storage, &*psa3, &*linked_set_requests));
         router.post(format!("/api/v1/{}/comment", psid),
                     move |req: &mut Request|
-                    handle_comment(req, &*queue3, &*psa));
+                    handle_comment(req, &*mrs2, &*queue3, &*psa, &*lsr2));
 
         let builder = thread::spawn(move || {
-            handle_build_request(&*queue, &*config3, &*psa2);
+            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*lsr3);
         });
         builders.push(builder);
     }
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
-}
-
-#[derive(Debug, Clone)]
-struct Project {
-    id: i64,
-    workspace_dir: PathBuf,
-    reviewers: Vec<String>,
-    token: String,
-    job_url: String,
-}
-
-#[derive(Debug, Clone)]
-struct ProjectSet {
-    projects: HashMap<i64, Project>,
 }
