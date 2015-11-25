@@ -186,7 +186,7 @@ impl MergeRequestBuilder {
     }
 }
 
-fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
+fn update_or_create_mr(storage: &mut HashMap<MrUid, MergeRequest>,
                        id: MrUid,
                        ssh_url: &str,
                        human_number: u64,
@@ -195,9 +195,7 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
                        new_status: Option<Status>,
                        new_approval_status: Option<ApprovalStatus>,
                        new_merge_status: Option<MergeStatus>) {
-    if let Some(mut existing_mr) =
-        find_mr_mut(&mut *list, id)
-    {
+    if let Some(mut existing_mr) = storage.get_mut(&id) {
         if old_statuses.iter().any(|x| *x == existing_mr.status)
             || old_statuses.len() == 0
         {
@@ -226,8 +224,8 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
         .build()
         .unwrap();
 
-    list.push_back(incoming);
-    info!("Queued up MR: {:?}", list.back());
+    storage.insert(id, incoming);
+    info!("Added MR: {:?}", storage[&id]);
 }
 
 fn handle_mr(
@@ -313,7 +311,7 @@ fn handle_mr(
 fn handle_comment(
     req: &mut Request,
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
-    queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
+    worker_queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     project_set: &ProjectSet,
     linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
     -> IronResult<Response> {
@@ -350,8 +348,6 @@ fn handle_comment(
     }
 
     let is_comment_author_reviewer = reviewers.iter().any(|s| s == username);
-
-    let &(ref list, ref cvar) = queue;
 
     let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap().to_owned();
     let target_project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
@@ -443,20 +439,24 @@ fn handle_comment(
             }
         }
     }
-    update_or_create_mr(
-        &mut *list.lock().unwrap(),
-        MrUid { target_project_id: target_project_id, id: mr_id },
-        ssh_url,
-        mr_human_number,
-        &old_statuses,
-        Some(&last_commit_id),
-        new_status,
-        new_approval_status,
-        None,
-        );
-    if needs_notification {
-        cvar.notify_one();
-        info!("Notified...");
+    {
+        update_or_create_mr(
+            &mut *mr_storage.lock().unwrap(),
+            MrUid { target_project_id: target_project_id, id: mr_id },
+            ssh_url,
+            mr_human_number,
+            &old_statuses,
+            Some(&last_commit_id),
+            new_status,
+            new_approval_status,
+            None,
+            );
+
+        if needs_notification {
+            let &(ref list, ref cvar) = worker_queue;
+            cvar.notify_one();
+            info!("Notified...");
+        }
     }
 
     debug!("handle_comment finished      : {}", time::precise_time_ns());
