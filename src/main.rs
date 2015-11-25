@@ -91,6 +91,7 @@ struct LinkedSetRequest {
     id: u64,
     project_name: String,
     mr_human_number: u64,
+    source_comment_url: String,
 }
 
 struct LinkedSet {
@@ -355,6 +356,8 @@ fn handle_comment(
 
     let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
     let note = attrs.get("note").unwrap().as_string().unwrap();
+    let comment_url = json.lookup("object_attributes.url").unwrap().as_string().unwrap();
+
     let mut old_statuses = Vec::new();
     let mut new_status = None;
     let mut new_approval_status = None;
@@ -405,6 +408,7 @@ fn handle_comment(
                                     id: id,
                                     project_name: project_name.to_owned(),
                                     mr_human_number: mr_human_number,
+                                    source_comment_url: comment_url.to_owned(),
                                 });
                         }
                         println!("{:?}", linked_set_requests);
