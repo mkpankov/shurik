@@ -65,7 +65,7 @@ struct MergeRequest {
     merge_status: MergeStatus,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MrUid {
     target_project_id: u64,
     id: u64,
@@ -232,6 +232,7 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
 
 fn handle_mr(
     req: &mut Request,
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     project_set: &ProjectSet,
     linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
@@ -314,6 +315,7 @@ fn handle_mr(
 
 fn handle_comment(
     req: &mut Request,
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     project_set: &ProjectSet,
     linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
@@ -465,6 +467,7 @@ fn handle_comment(
 }
 
 fn handle_build_request(
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     config: &toml::Value,
     project_set: &ProjectSet,
@@ -805,6 +808,9 @@ fn main() {
                 panic!("A project with id {}: {:?} is already present in project set with id {}: {:?}. Project can be present only in one project set.", id, p, psid, ps);
             }
         }
+        let mr_storage = Arc::new(Mutex::new(HashMap::new()));
+        let mrs2 = mr_storage.clone();
+        let mrs3 = mrs2.clone();
         let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
         let queue2 = queue.clone();
         let queue3 = queue.clone();
@@ -819,13 +825,13 @@ fn main() {
 
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
-                    handle_mr(req, &*queue2, &*psa3, &*linked_set_requests));
+                    handle_mr(req, &*mr_storage, &*queue2, &*psa3, &*linked_set_requests));
         router.post(format!("/api/v1/{}/comment", psid),
                     move |req: &mut Request|
-                    handle_comment(req, &*queue3, &*psa, &*lsr2));
+                    handle_comment(req, &*mrs2, &*queue3, &*psa, &*lsr2));
 
         let builder = thread::spawn(move || {
-            handle_build_request(&*queue, &*config3, &*psa2, &*lsr3);
+            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*lsr3);
         });
         builders.push(builder);
     }
