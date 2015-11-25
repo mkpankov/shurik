@@ -91,7 +91,14 @@ struct LinkedSetRequest {
     id: u64,
     project_name: String,
     mr_human_number: u64,
+    links: Vec<MrLinkHuman>,
     source_comment_url: String,
+}
+
+#[derive(Debug)]
+struct MrLinkHuman {
+    project_name: String,
+    mr_human_number: u64,
 }
 
 struct LinkedSet {
@@ -349,6 +356,7 @@ fn handle_comment(
 
     let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap().to_owned();
     let target_project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
+    let target_project_name = json.lookup("merge_request.target.name").unwrap().as_string().unwrap();
     let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
     let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
     let ssh_url = json.lookup("merge_request.target.ssh_url").unwrap().as_string().unwrap();
@@ -397,20 +405,27 @@ fn handle_comment(
                         let args_span = (mention_len + command_name.len(), note.len());
                         let args_string = &note[args_span.0..args_span.1];
                         let args: Vec<_> = args_string.split(",").collect();
+                        let mut links = Vec::new();
                         for arg in args {
                             let components: Vec<_> = arg.split("/").collect();
                             let project_name = components[0];
                             let mr_human_number = components[1].parse().unwrap();
-                            let mut linked_sets = linked_set_requests.lock().unwrap();
-                            let id = linked_sets.len() as u64;
-                            linked_sets.push(
-                                LinkedSetRequest {
-                                    id: id,
-                                    project_name: project_name.to_owned(),
-                                    mr_human_number: mr_human_number,
-                                    source_comment_url: comment_url.to_owned(),
-                                });
+                            let mr_link_human = MrLinkHuman {
+                                project_name: project_name.to_owned(),
+                                mr_human_number: mr_human_number,
+                            };
+                            links.push(mr_link_human);
                         }
+                        let mut linked_sets = linked_set_requests.lock().unwrap();
+                        let id = linked_sets.len() as u64;
+                        linked_sets.push(
+                            LinkedSetRequest {
+                                id: id,
+                                project_name: target_project_name.to_owned(),
+                                mr_human_number: mr_human_number,
+                                links: links,
+                                source_comment_url: comment_url.to_owned(),
+                            });
                         println!("{:?}", linked_set_requests);
                     } else {
                         info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
@@ -452,7 +467,8 @@ fn handle_comment(
 fn handle_build_request(
     queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     config: &toml::Value,
-    project_set: &ProjectSet) -> !
+    project_set: &ProjectSet,
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>) -> !
 {
     debug!("handle_build_request started : {}", time::precise_time_ns());
     let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
@@ -502,6 +518,14 @@ fn handle_build_request(
         let projects = &project_set.projects;
         let project = &projects[&(mr_id.target_project_id as i64)];
         let workspace_dir = &project.workspace_dir.to_str().unwrap();
+
+        for lsr in &*linked_set_requests.lock().unwrap() {
+            if project.name == lsr.project_name
+                && mr_human_number == lsr.mr_human_number
+            {
+                ;
+            }
+        }
 
         if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
             continue;
@@ -791,18 +815,19 @@ fn main() {
         let psa2 = psa.clone();
         let psa3 = psa.clone();
 
-        let linked_sets = Arc::new(Mutex::new(Vec::new()));
-        let ls2 = linked_sets.clone();
+        let linked_set_requests = Arc::new(Mutex::new(Vec::new()));
+        let lsr2 = linked_set_requests.clone();
+        let lsr3 = lsr2.clone();
 
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
-                    handle_mr(req, &*queue2, &*psa3, &*linked_sets));
+                    handle_mr(req, &*queue2, &*psa3, &*linked_set_requests));
         router.post(format!("/api/v1/{}/comment", psid),
                     move |req: &mut Request|
-                    handle_comment(req, &*queue3, &*psa, &*ls2));
+                    handle_comment(req, &*queue3, &*psa, &*lsr2));
 
         let builder = thread::spawn(move || {
-            handle_build_request(&*queue, &*config3, &*psa2);
+            handle_build_request(&*queue, &*config3, &*psa2, &*lsr3);
         });
         builders.push(builder);
     }
