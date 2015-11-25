@@ -5,14 +5,14 @@ use std::time::Duration;
 use ::std;
 use ::iron::*;
 
-pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str, run_type: &str) -> String {
+pub fn enqueue_build(workspace_dir: &str, user: &str, password: &str, job_url: &str, token: &str, run_type: &str) -> String {
     let output = Command::new("wget")
         .arg("-S").arg("-O-")
         .arg("--no-check-certificate").arg("--auth-no-challenge")
         .arg(format!("--http-user={}", user))
         .arg(format!("--http-password={}", password))
         .arg(format!("{}/?cause=I+want+to+be+built&RUN_TYPE={}", job_url, run_type))
-        .current_dir("workspace/shurik")
+        .current_dir(workspace_dir)
         .output()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
@@ -33,7 +33,7 @@ pub fn enqueue_build(user: &str, password: &str, job_url: &str, token: &str, run
     location.to_owned()
 }
 
-pub fn poll_queue(user: &str, password: &str, location: &str) -> String {
+pub fn poll_queue(workspace_dir: &str, user: &str, password: &str, location: &str) -> String {
     let arg;
     loop {
         let output = Command::new("wget")
@@ -42,7 +42,7 @@ pub fn poll_queue(user: &str, password: &str, location: &str) -> String {
             .arg(format!("--http-user={}", user))
             .arg(format!("--http-password={}", password))
             .arg(format!("{}/api/json?pretty=true", location))
-            .current_dir("workspace/shurik")
+            .current_dir(workspace_dir)
             .output()
             .unwrap_or_else(|e| {
                 panic!("failed to execute process: {}", e)
@@ -74,7 +74,7 @@ pub fn poll_queue(user: &str, password: &str, location: &str) -> String {
     arg
 }
 
-pub fn poll_build(user: &str, password: &str, build_url: &str) -> String {
+pub fn poll_build(workspace_dir: &str, user: &str, password: &str, build_url: &str) -> String {
     let result_string;
     loop {
         let output = Command::new("wget")
@@ -83,7 +83,7 @@ pub fn poll_build(user: &str, password: &str, build_url: &str) -> String {
             .arg(format!("--http-user={}", user))
             .arg(format!("--http-password={}", password))
             .arg(format!("{}/api/json?pretty=true", build_url))
-            .current_dir("workspace/shurik")
+            .current_dir(workspace_dir)
             .output()
             .unwrap_or_else(|e| {
                 panic!("failed to execute process: {}", e)
