@@ -233,12 +233,10 @@ fn update_or_create_mr(list: &mut LinkedList<MergeRequest>,
 fn handle_mr(
     req: &mut Request,
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
-    queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
     project_set: &ProjectSet,
     linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
     -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
-    let &(ref list, _) = queue;
     let ref mut body = req.body;
     let mut s: String = String::new();
     body.read_to_string(&mut s).unwrap();
@@ -295,18 +293,17 @@ fn handle_mr(
         }
     }
     {
-        let mut list = list.lock().unwrap();
-        update_or_create_mr(
-            &mut *list,
-            MrUid { target_project_id: target_project_id, id: mr_id },
-            ssh_url,
-            mr_human_number,
-            &[],
-            Some(checkout_sha),
-            Some(new_status),
-            Some(ApprovalStatus::Pending),
-            Some(merge_status)
-            );
+        let new_id = MrUid { target_project_id: target_project_id, id: mr_id };
+        let new_mr = MergeRequest {
+            id: new_id,
+            human_number: mr_human_number,
+            ssh_url: ssh_url.to_owned(),
+            checkout_sha: checkout_sha.to_owned(),
+            status: new_status,
+            approval_status: ApprovalStatus::Pending,
+            merge_status: merge_status,
+        };
+        mr_storage.lock().unwrap().insert(new_id, new_mr);
     }
 
     debug!("handle_mr finished           : {}", time::precise_time_ns());
@@ -812,7 +809,6 @@ fn main() {
         let mrs2 = mr_storage.clone();
         let mrs3 = mrs2.clone();
         let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
-        let queue2 = queue.clone();
         let queue3 = queue.clone();
         let config2 = config.clone();
         let config3 = config2.clone();
@@ -825,7 +821,7 @@ fn main() {
 
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
-                    handle_mr(req, &*mr_storage, &*queue2, &*psa3, &*linked_set_requests));
+                    handle_mr(req, &*mr_storage, &*psa3, &*linked_set_requests));
         router.post(format!("/api/v1/{}/comment", psid),
                     move |req: &mut Request|
                     handle_comment(req, &*mrs2, &*queue3, &*psa, &*lsr2));
