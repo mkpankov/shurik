@@ -65,6 +65,21 @@ struct MergeRequest {
     merge_status: MergeStatus,
 }
 
+#[derive(Debug)]
+struct WorkerTask {
+    id: MrUid,
+    human_number: u64,
+    ssh_url: String,
+    checkout_sha: String,
+    job_type: JobType,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum JobType {
+    Try,
+    Merge
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MrUid {
     target_project_id: u64,
@@ -311,7 +326,7 @@ fn handle_mr(
 fn handle_comment(
     req: &mut Request,
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
-    worker_queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
+    worker_queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     project_set: &ProjectSet,
     linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
     -> IronResult<Response> {
@@ -440,9 +455,10 @@ fn handle_comment(
         }
     }
     {
+        let id = MrUid { target_project_id: target_project_id, id: mr_id };
         update_or_create_mr(
             &mut *mr_storage.lock().unwrap(),
-            MrUid { target_project_id: target_project_id, id: mr_id },
+            id,
             ssh_url,
             mr_human_number,
             &old_statuses,
@@ -452,8 +468,22 @@ fn handle_comment(
             None,
             );
 
+
         if needs_notification {
+            let job_type = match new_approval_status {
+                Some(ApprovalStatus::Approved) => JobType::Merge,
+                _ => JobType::Try,
+            };
+            let new_task = WorkerTask {
+                id: id,
+                human_number: mr_human_number,
+                ssh_url: ssh_url.to_owned(),
+                checkout_sha: last_commit_id,
+                job_type: job_type,
+            };
+
             let &(ref list, ref cvar) = worker_queue;
+            list.lock().unwrap().push_back(new_task);
             cvar.notify_one();
             info!("Notified...");
         }
@@ -465,7 +495,7 @@ fn handle_comment(
 
 fn handle_build_request(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
-    queue: &(Mutex<LinkedList<MergeRequest>>, Condvar),
+    queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     config: &toml::Value,
     project_set: &ProjectSet,
     linked_set_requests: &Mutex<Vec<LinkedSetRequest>>) -> !
@@ -506,16 +536,10 @@ fn handle_build_request(
         let mut request = list.pop_front().unwrap();
         info!("Got the request: {:?}", request);
 
-        let list_copy = list.clone();
-        debug!("List copy: {:?}", list_copy);
-        drop(list);
-
         let arg = request.checkout_sha.clone();
         let mr_id = request.id;
         let mr_human_number = request.human_number;
-        let request_status = request.status;
         let ssh_url = request.ssh_url.clone();
-        debug!("{:?}", request.status);
         let projects = &project_set.projects;
         let project = &projects[&(mr_id.target_project_id as i64)];
         let workspace_dir = &project.workspace_dir.to_str().unwrap();
@@ -526,10 +550,6 @@ fn handle_build_request(
             {
                 ;
             }
-        }
-
-        if request_status != Status::Open(SubStatusOpen::WaitingForCi) {
-            continue;
         }
 
         let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
@@ -560,7 +580,7 @@ fn handle_build_request(
         let jenkins_job_url = &project.job_url;
         debug!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
 
-        let run_type = if request.approval_status == ApprovalStatus::Approved {
+        let run_type = if request.job_type == JobType::Merge {
             "deploy"
         } else {
             "try"
@@ -576,7 +596,7 @@ fn handle_build_request(
 
         if result_string == "SUCCESS" {
             let &(ref mutex, _) = queue;
-            if let Some(new_request) = find_mr_mut(&mut *mutex.lock().unwrap(), mr_id)
+            if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id)
             {
                 if new_request.checkout_sha == request.checkout_sha {
                     if new_request.approval_status != ApprovalStatus::Approved {
@@ -594,12 +614,24 @@ fn handle_build_request(
                     continue;
                 }
             }
-            assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
-            if request.approval_status == ApprovalStatus::Approved {
+            let mut do_merge = false;
+            {
+                let mut mr_storage_locked = mr_storage.lock().unwrap();
+                let mut request = mr_storage_locked.get_mut(&mr_id).unwrap();
+                assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
+                if request.approval_status == ApprovalStatus::Approved {
+                    do_merge = true;
+                }
+            }
+            if do_merge {
                 info!("Merging");
                 let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-                request.status = Status::Open(SubStatusOpen::WaitingForMerge);
+                {
+                    let mut mr_storage_locked = mr_storage.lock().unwrap();
+                    let mut request = mr_storage_locked.get_mut(&mr_id).unwrap();
+                    request.status = Status::Open(SubStatusOpen::WaitingForMerge);
+                }
                 git::checkout(workspace_dir, "master");
                 match git::merge(workspace_dir, "try", mr_human_number, true) {
                     Ok(_) => {},
@@ -611,12 +643,16 @@ fn handle_build_request(
                 }
                 git::status(workspace_dir);
                 git::push(workspace_dir, key_path, false);
-                request.status = Status::Merged;
+                {
+                    let mut mr_storage_locked = mr_storage.lock().unwrap();
+                    // MR was merged, removing
+                    mr_storage_locked.remove(&mr_id);
+                }
                 info!("Updated existing MR");
                 let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
-                for mr in list_copy.iter() {
+                for mr in mr_storage.lock().unwrap().values() {
                     info!("MR to try merge: {:?}", mr);
                     git::set_remote_url(workspace_dir, &ssh_url);
                     git::set_user(workspace_dir, "Shurik", "shurik@example.com");
@@ -625,33 +661,6 @@ fn handle_build_request(
                 continue;
             }
         }
-        let &(ref mutex, _) = queue;
-        let list = &mut *mutex.lock().unwrap();
-        let mut need_push_back = false;
-        {
-            if let Some(new_request) = find_mr_mut(list, mr_id)
-            {
-                if new_request.checkout_sha != request.checkout_sha
-                    || new_request.approval_status != request.approval_status
-                {
-                    info!("The MR was updated, discarding this one");
-                } else {
-                    info!("Pushing back old MR");
-                    request.status = Status::Open(SubStatusOpen::WaitingForReview);
-                    need_push_back = true;
-                }
-            } else {
-                info!("Push back old MR and setting it for review");
-                request.status = Status::Open(SubStatusOpen::WaitingForReview);
-                need_push_back = true;
-            }
-        }
-        let mr_id = request.id.clone();
-        if need_push_back {
-            list.push_back(request);
-        }
-        info!("{:?}", &*list);
-        drop(list);
 
         let build_result_message = match &*result_string {
             "SUCCESS" => "успешно",
