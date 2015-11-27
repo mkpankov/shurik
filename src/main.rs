@@ -8,6 +8,7 @@ extern crate env_logger;
 
 extern crate regex;
 extern crate router;
+extern crate rustc_serialize;
 extern crate serde_json;
 extern crate time;
 extern crate toml;
@@ -27,12 +28,14 @@ mod git;
 mod jenkins;
 mod gitlab;
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum SubStatusBuilding {
     Queued(String),
     InProgress(String),
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum SubStatusOpen {
     WaitingForReview,
@@ -41,6 +44,7 @@ enum SubStatusOpen {
     WaitingForMerge,
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum Status {
     Open(SubStatusOpen),
@@ -48,6 +52,7 @@ enum Status {
     Closed,
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum ApprovalStatus {
     Pending,
@@ -55,12 +60,14 @@ enum ApprovalStatus {
     Rejected,
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum MergeStatus {
     CanBeMerged,
     CanNotBeMerged,
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, Clone)]
 struct MergeRequest {
     id: MrUid,
@@ -88,6 +95,7 @@ enum JobType {
     Merge
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MrUid {
     target_project_id: u64,
