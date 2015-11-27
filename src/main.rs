@@ -31,6 +31,7 @@ mod gitlab;
 #[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum SubStatusBuilding {
+    NotStarted,
     Queued(String),
     InProgress(String),
     Finished(String),
@@ -490,15 +491,75 @@ fn handle_comment(
     return Ok(Response::with(status::Ok));
 }
 
-fn perform_jenkins_build(
+fn perform_or_continue_jenkins_build(
+    mr_id: &MrUid,
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
-    workspace_dir: &str,
-    http_user: &str,
-    http_password: &str,
-    jenkins_job_url: &str,
+    project_set: &ProjectSet,
+    config: &toml::Value,
     run_type: &str)
+    -> String
 {
-    ;
+    use SubStatusBuilding::*;
+    let mut current_build_status: SubStatusBuilding;
+
+    let projects = &project_set.projects;
+    let project = &projects[&(mr_id.target_project_id as i64)];
+    let workspace_dir = &project.workspace_dir.to_str().unwrap();
+    let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
+    let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
+    let jenkins_job_url = &project.job_url;
+
+    let current_status;
+    {
+        let mrs = mr_storage.lock().unwrap();
+        let mr = mrs.get(&mr_id).unwrap();
+        current_status = mr.status.clone();
+    };
+    if let Status::Open(sso) = current_status {
+        if let SubStatusOpen::Building(ssb) = sso {
+            current_build_status = ssb;
+        } else {
+            panic!("MR {:?} is open, but not building", mr_id);
+        }
+    } else {
+        panic!("MR {:?} is not open", mr_id);
+    }
+
+    if let NotStarted = current_build_status {
+        let queue_item_url = jenkins::enqueue_build(workspace_dir, http_user, http_password, jenkins_job_url, run_type);
+        info!("Queue item URL: {}", queue_item_url);
+        let mut mrs = mr_storage.lock().unwrap();
+        let mut r = mrs.get_mut(&mr_id).unwrap();
+        r.status =
+            Status::Open(SubStatusOpen::Building(SubStatusBuilding::Queued(
+                queue_item_url.clone())));
+        current_build_status = Queued(queue_item_url.clone());
+    }
+    if let Queued(queue_item_url) = current_build_status {
+        let build_url = jenkins::poll_queue(workspace_dir, http_user, http_password, &queue_item_url);
+        info!("Build job URL: {}", queue_item_url);
+        let mut mrs = mr_storage.lock().unwrap();
+        let mut r = mrs.get_mut(&mr_id).unwrap();
+        r.status =
+            Status::Open(SubStatusOpen::Building(SubStatusBuilding::InProgress(
+                build_url.clone())));
+        current_build_status = InProgress(build_url.clone());
+    }
+    if let InProgress(build_url) = current_build_status {
+        let result = jenkins::poll_build(workspace_dir, http_user, http_password, &build_url);
+        info!("Result: {}", result);
+        let mut mrs = mr_storage.lock().unwrap();
+        let mut r = mrs.get_mut(&mr_id).unwrap();
+        r.status =
+            Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(
+                result.clone())));
+        current_build_status = Finished(result.clone());
+    }
+    if let Finished(result) = current_build_status {
+        result
+    } else {
+        unreachable!();
+    }
 }
 
 fn handle_build_request(
