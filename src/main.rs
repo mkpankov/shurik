@@ -27,14 +27,21 @@ mod git;
 mod jenkins;
 mod gitlab;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum SubStatusBuilding {
+    Queued(String),
+    InProgress(String),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum SubStatusOpen {
     WaitingForReview,
     WaitingForCi,
+    Building(SubStatusBuilding),
     WaitingForMerge,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum Status {
     Open(SubStatusOpen),
     Merged,
@@ -381,9 +388,8 @@ fn handle_comment(
                 },
                 "r-" | "отказываю" => {
                     if is_comment_author_reviewer {
-                        old_statuses.extend(
-                            &[Status::Open(SubStatusOpen::WaitingForCi),
-                              Status::Open(SubStatusOpen::WaitingForMerge)]);
+                        old_statuses.push(Status::Open(SubStatusOpen::WaitingForCi));
+                        old_statuses.push(Status::Open(SubStatusOpen::WaitingForMerge));
                         new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
                         new_approval_status = Some(ApprovalStatus::Rejected);
                     } else {
