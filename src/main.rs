@@ -33,6 +33,7 @@ mod gitlab;
 enum SubStatusBuilding {
     Queued(String),
     InProgress(String),
+    Finished(String),
 }
 
 #[derive(RustcDecodable, RustcEncodable)]
@@ -108,7 +109,6 @@ struct Project {
     name: String,
     workspace_dir: PathBuf,
     reviewers: Vec<String>,
-    token: String,
     job_url: String,
 }
 
@@ -490,6 +490,17 @@ fn handle_comment(
     return Ok(Response::with(status::Ok));
 }
 
+fn perform_jenkins_build(
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    workspace_dir: &str,
+    http_user: &str,
+    http_password: &str,
+    jenkins_job_url: &str,
+    run_type: &str)
+{
+    ;
+}
+
 fn handle_build_request(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
@@ -573,23 +584,47 @@ fn handle_build_request(
 
         let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
         let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
-        let token = &project.token;
         let jenkins_job_url = &project.job_url;
-        debug!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
+        debug!("{} {} {}", http_user, http_password, jenkins_job_url);
 
         let run_type = if request.job_type == JobType::Merge {
             "deploy"
         } else {
             "try"
         };
-        let queue_url = jenkins::enqueue_build(workspace_dir, http_user, http_password, jenkins_job_url, token, run_type);
-        info!("Queue item URL: {}", queue_url);
 
-        let build_url = jenkins::poll_queue(workspace_dir, http_user, http_password, &queue_url);
-        info!("Build job URL: {}", queue_url);
+        let queue_url;
+        {
+            queue_url = jenkins::enqueue_build(workspace_dir, http_user, http_password, jenkins_job_url, run_type);
+            info!("Queue item URL: {}", queue_url);
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Queued(
+                    queue_url.clone())));
+        }
 
-        let result_string = jenkins::poll_build(workspace_dir, http_user, http_password, &build_url);
-        info!("Result: {}", result_string);
+        let build_url;
+        {
+            build_url = jenkins::poll_queue(workspace_dir, http_user, http_password, &queue_url);
+            info!("Build job URL: {}", queue_url);
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::InProgress(
+                    build_url.clone())));
+        }
+
+        let result_string;
+        {
+            result_string = jenkins::poll_build(workspace_dir, http_user, http_password, &build_url);
+            info!("Result: {}", result_string);
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(
+                    result_string.clone())));
+        }
 
         if result_string == "SUCCESS" {
             if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id)
@@ -776,7 +811,6 @@ fn main() {
             }
             let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
             let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
-            let token = project_toml.lookup("token").unwrap().as_str().unwrap();
             let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
             let name = project_toml.lookup("name").unwrap().as_str().unwrap();
 
@@ -784,7 +818,6 @@ fn main() {
                 id: key,
                 workspace_dir: PathBuf::from(project_toml.lookup("workspace-dir").unwrap().as_str().unwrap()),
                 reviewers: string_vec,
-                token: token.to_owned(),
                 job_url: job_url.to_owned(),
                 name: name.to_owned(),
             };

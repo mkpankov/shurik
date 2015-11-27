@@ -5,7 +5,7 @@ use std::time::Duration;
 use ::std;
 use ::iron::*;
 
-pub fn enqueue_build(workspace_dir: &str, user: &str, password: &str, job_url: &str, token: &str, run_type: &str) -> String {
+pub fn enqueue_build(workspace_dir: &str, user: &str, password: &str, job_url: &str, run_type: &str) -> String {
     let output = Command::new("wget")
         .arg("-S").arg("-O-")
         .arg("--no-check-certificate").arg("--auth-no-challenge")
