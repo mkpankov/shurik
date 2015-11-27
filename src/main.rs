@@ -34,7 +34,7 @@ enum SubStatusBuilding {
     NotStarted,
     Queued(String),
     InProgress(String),
-    Finished(String),
+    Finished(String, String),
 }
 
 #[derive(RustcDecodable, RustcEncodable)]
@@ -497,7 +497,7 @@ fn perform_or_continue_jenkins_build(
     project_set: &ProjectSet,
     config: &toml::Value,
     run_type: &str)
-    -> String
+    -> (String, String)
 {
     use SubStatusBuilding::*;
     let mut current_build_status: SubStatusBuilding;
@@ -552,11 +552,11 @@ fn perform_or_continue_jenkins_build(
         let mut r = mrs.get_mut(&mr_id).unwrap();
         r.status =
             Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(
-                result.clone())));
-        current_build_status = Finished(result.clone());
+                build_url.clone(), result.clone())));
+        current_build_status = Finished(build_url.clone(), result.clone());
     }
-    if let Finished(result) = current_build_status {
-        result
+    if let Finished(build_url, result) = current_build_status {
+        (build_url, result)
     } else {
         unreachable!();
     }
@@ -654,7 +654,7 @@ fn handle_build_request(
             "try"
         };
 
-        let result_string = perform_or_continue_jenkins_build(
+        let (build_url, result_string) = perform_or_continue_jenkins_build(
             &mr_id,
             mr_storage,
             project_set,
