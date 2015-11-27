@@ -654,12 +654,26 @@ fn handle_build_request(
             "try"
         };
 
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
+        }
+
         let (build_url, result_string) = perform_or_continue_jenkins_build(
             &mr_id,
             mr_storage,
             project_set,
             config,
             run_type);
+
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::WaitingForMerge);
+        }
 
         if result_string == "SUCCESS" {
             if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id)
