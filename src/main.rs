@@ -8,6 +8,7 @@ extern crate env_logger;
 
 extern crate regex;
 extern crate router;
+extern crate rustc_serialize;
 extern crate serde_json;
 extern crate time;
 extern crate toml;
@@ -27,20 +28,33 @@ mod git;
 mod jenkins;
 mod gitlab;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum SubStatusBuilding {
+    NotStarted,
+    Queued(String),
+    InProgress(String),
+    Finished(String, String),
+}
+
+#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum SubStatusOpen {
     WaitingForReview,
     WaitingForCi,
+    Building(SubStatusBuilding),
     WaitingForMerge,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum Status {
     Open(SubStatusOpen),
     Merged,
     Closed,
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum ApprovalStatus {
     Pending,
@@ -48,12 +62,14 @@ enum ApprovalStatus {
     Rejected,
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum MergeStatus {
     CanBeMerged,
     CanNotBeMerged,
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, Clone)]
 struct MergeRequest {
     id: MrUid,
@@ -81,6 +97,7 @@ enum JobType {
     Merge
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MrUid {
     target_project_id: u64,
@@ -93,7 +110,6 @@ struct Project {
     name: String,
     workspace_dir: PathBuf,
     reviewers: Vec<String>,
-    token: String,
     job_url: String,
 }
 
@@ -381,9 +397,8 @@ fn handle_comment(
                 },
                 "r-" | "отказываю" => {
                     if is_comment_author_reviewer {
-                        old_statuses.extend(
-                            &[Status::Open(SubStatusOpen::WaitingForCi),
-                              Status::Open(SubStatusOpen::WaitingForMerge)]);
+                        old_statuses.push(Status::Open(SubStatusOpen::WaitingForCi));
+                        old_statuses.push(Status::Open(SubStatusOpen::WaitingForMerge));
                         new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
                         new_approval_status = Some(ApprovalStatus::Rejected);
                     } else {
@@ -476,6 +491,77 @@ fn handle_comment(
     return Ok(Response::with(status::Ok));
 }
 
+fn perform_or_continue_jenkins_build(
+    mr_id: &MrUid,
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    project_set: &ProjectSet,
+    config: &toml::Value,
+    run_type: &str)
+    -> (String, String)
+{
+    use SubStatusBuilding::*;
+    let mut current_build_status: SubStatusBuilding;
+
+    let projects = &project_set.projects;
+    let project = &projects[&(mr_id.target_project_id as i64)];
+    let workspace_dir = &project.workspace_dir.to_str().unwrap();
+    let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
+    let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
+    let jenkins_job_url = &project.job_url;
+
+    let current_status;
+    {
+        let mrs = mr_storage.lock().unwrap();
+        let mr = mrs.get(&mr_id).unwrap();
+        current_status = mr.status.clone();
+    };
+    if let Status::Open(sso) = current_status {
+        if let SubStatusOpen::Building(ssb) = sso {
+            current_build_status = ssb;
+        } else {
+            panic!("MR {:?} is open, but not building", mr_id);
+        }
+    } else {
+        panic!("MR {:?} is not open", mr_id);
+    }
+
+    if let NotStarted = current_build_status {
+        let queue_item_url = jenkins::enqueue_build(workspace_dir, http_user, http_password, jenkins_job_url, run_type);
+        info!("Queue item URL: {}", queue_item_url);
+        let mut mrs = mr_storage.lock().unwrap();
+        let mut r = mrs.get_mut(&mr_id).unwrap();
+        r.status =
+            Status::Open(SubStatusOpen::Building(SubStatusBuilding::Queued(
+                queue_item_url.clone())));
+        current_build_status = Queued(queue_item_url.clone());
+    }
+    if let Queued(queue_item_url) = current_build_status {
+        let build_url = jenkins::poll_queue(workspace_dir, http_user, http_password, &queue_item_url);
+        info!("Build job URL: {}", queue_item_url);
+        let mut mrs = mr_storage.lock().unwrap();
+        let mut r = mrs.get_mut(&mr_id).unwrap();
+        r.status =
+            Status::Open(SubStatusOpen::Building(SubStatusBuilding::InProgress(
+                build_url.clone())));
+        current_build_status = InProgress(build_url.clone());
+    }
+    if let InProgress(build_url) = current_build_status {
+        let result = jenkins::poll_build(workspace_dir, http_user, http_password, &build_url);
+        info!("Result: {}", result);
+        let mut mrs = mr_storage.lock().unwrap();
+        let mut r = mrs.get_mut(&mr_id).unwrap();
+        r.status =
+            Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(
+                build_url.clone(), result.clone())));
+        current_build_status = Finished(build_url.clone(), result.clone());
+    }
+    if let Finished(build_url, result) = current_build_status {
+        (build_url, result)
+    } else {
+        unreachable!();
+    }
+}
+
 fn handle_build_request(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
@@ -559,23 +645,21 @@ fn handle_build_request(
 
         let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
         let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
-        let token = &project.token;
         let jenkins_job_url = &project.job_url;
-        debug!("{} {} {} {}", http_user, http_password, token, jenkins_job_url);
+        debug!("{} {} {}", http_user, http_password, jenkins_job_url);
 
         let run_type = if request.job_type == JobType::Merge {
             "deploy"
         } else {
             "try"
         };
-        let queue_url = jenkins::enqueue_build(workspace_dir, http_user, http_password, jenkins_job_url, token, run_type);
-        info!("Queue item URL: {}", queue_url);
 
-        let build_url = jenkins::poll_queue(workspace_dir, http_user, http_password, &queue_url);
-        info!("Build job URL: {}", queue_url);
-
-        let result_string = jenkins::poll_build(workspace_dir, http_user, http_password, &build_url);
-        info!("Result: {}", result_string);
+        let (build_url, result_string) = perform_or_continue_jenkins_build(
+            &mr_id,
+            mr_storage,
+            project_set,
+            config,
+            run_type);
 
         if result_string == "SUCCESS" {
             if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id)
@@ -762,7 +846,6 @@ fn main() {
             }
             let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
             let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
-            let token = project_toml.lookup("token").unwrap().as_str().unwrap();
             let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
             let name = project_toml.lookup("name").unwrap().as_str().unwrap();
 
@@ -770,7 +853,6 @@ fn main() {
                 id: key,
                 workspace_dir: PathBuf::from(project_toml.lookup("workspace-dir").unwrap().as_str().unwrap()),
                 reviewers: string_vec,
-                token: token.to_owned(),
                 job_url: job_url.to_owned(),
                 name: name.to_owned(),
             };

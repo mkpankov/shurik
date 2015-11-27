@@ -19,11 +19,9 @@ password = "foobar_api_token"
 [[project-set.project]]
 workspace-dir = "/path/to/shurik/workspace/project_name"
 reviewers = [ "foobaz_gitlab_login" ]
-token = "build_token_from_jenkins_for_project"
 job-url = "https://hudson.host/jenkins/job/project_name/build"
 
 [[project-set.project]]
 workspace-dir = "/path/to/shurik/workspace/another_project_name"
 reviewers = [ "barbar_gitlab_login" ]
-token = "build_token_from_jenkins_for_another_project"
 job-url = "https://hudson.host/jenkins/job/another_project_name/build"
