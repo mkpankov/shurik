@@ -700,7 +700,7 @@ fn handle_build_request(
             {
                 let mut mr_storage_locked = mr_storage.lock().unwrap();
                 let request = mr_storage_locked.get_mut(&mr_id).unwrap();
-                assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForCi));
+                assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForMerge));
                 if request.approval_status == ApprovalStatus::Approved {
                     do_merge = true;
                 }
