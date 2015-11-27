@@ -654,38 +654,12 @@ fn handle_build_request(
             "try"
         };
 
-        let queue_url;
-        {
-            queue_url = jenkins::enqueue_build(workspace_dir, http_user, http_password, jenkins_job_url, run_type);
-            info!("Queue item URL: {}", queue_url);
-            let mut mrs = mr_storage.lock().unwrap();
-            let mut r = mrs.get_mut(&mr_id).unwrap();
-            r.status =
-                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Queued(
-                    queue_url.clone())));
-        }
-
-        let build_url;
-        {
-            build_url = jenkins::poll_queue(workspace_dir, http_user, http_password, &queue_url);
-            info!("Build job URL: {}", queue_url);
-            let mut mrs = mr_storage.lock().unwrap();
-            let mut r = mrs.get_mut(&mr_id).unwrap();
-            r.status =
-                Status::Open(SubStatusOpen::Building(SubStatusBuilding::InProgress(
-                    build_url.clone())));
-        }
-
-        let result_string;
-        {
-            result_string = jenkins::poll_build(workspace_dir, http_user, http_password, &build_url);
-            info!("Result: {}", result_string);
-            let mut mrs = mr_storage.lock().unwrap();
-            let mut r = mrs.get_mut(&mr_id).unwrap();
-            r.status =
-                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(
-                    result_string.clone())));
-        }
+        let result_string = perform_or_continue_jenkins_build(
+            &mr_id,
+            mr_storage,
+            project_set,
+            config,
+            run_type);
 
         if result_string == "SUCCESS" {
             if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id)
