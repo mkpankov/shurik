@@ -734,11 +734,6 @@ fn handle_build_request(
                 info!("Merging");
                 let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-                {
-                    let mut mr_storage_locked = mr_storage.lock().unwrap();
-                    let mut request = mr_storage_locked.get_mut(&mr_id).unwrap();
-                    request.status = Status::Open(SubStatusOpen::WaitingForMerge);
-                }
                 git::checkout(workspace_dir, "master");
                 match git::merge(workspace_dir, "try", mr_human_number, true) {
                     Ok(_) => {},
