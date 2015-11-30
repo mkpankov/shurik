@@ -725,7 +725,7 @@ fn handle_build_request(
         save_state(state_save_dir, &project_set.name, mr_storage);
 
         if do_update {
-            let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
+            let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит {}\"}}", arg);
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
             git::set_remote_url(workspace_dir, &ssh_url);
@@ -924,7 +924,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     let merge_status = mr.merge_status;
     debug!("{:?}", mr.status);
     if merge_status != MergeStatus::CanBeMerged {
-        let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: #{}\"}}", arg);
+        let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: {}\"}}", arg);
         gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
         return;
     }
@@ -938,7 +938,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     match git::merge(workspace_dir, "master", mr_human_number, false) {
         Ok(_) => {},
         Err(_) => {
-            let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: #{}\"}}", arg);
+            let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: {}\"}}", arg);
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
             return;
         }
