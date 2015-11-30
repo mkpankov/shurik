@@ -254,6 +254,21 @@ fn save_state(
     file.write_all(serialized.as_bytes()).unwrap();
 }
 
+fn load_state(
+    state_save_dir: &str,
+    name: &str)
+    -> HashMap<MrUid, MergeRequest>
+{
+    let mut path = PathBuf::from(state_save_dir);
+    path.push(name);
+    path.set_extension("state.json");
+    let mut file = File::open(path).unwrap();
+    let mut serialized = String::new();
+    file.read_to_string(&mut serialized).unwrap();
+    let mr_storage: HashMap<MrUid, MergeRequest> = json::decode(&serialized).unwrap();
+    mr_storage
+}
+
 fn handle_mr(
     req: &mut Request,
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
@@ -904,6 +919,7 @@ fn main() {
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
+    let state_save_dir = config.lookup("general.state-save-dir").unwrap().as_str().unwrap();
 
     for (psid, project_set) in project_sets.into_iter() {
         let mut reverse_project_map = HashMap::new();
@@ -917,6 +933,7 @@ fn main() {
                 panic!("A project with id {}: {:?} is already present in project set with id {}: {:?}. Project can be present only in one project set.", id, p, psid, ps);
             }
         }
+        let mr_storage = load_state(state_save_dir, psid);
         let mr_storage = Arc::new(Mutex::new(HashMap::new()));
         let mrs2 = mr_storage.clone();
         let mrs3 = mrs2.clone();
