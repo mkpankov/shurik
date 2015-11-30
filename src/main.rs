@@ -590,7 +590,8 @@ fn handle_build_request(
     queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     config: &toml::Value,
     project_set: &ProjectSet,
-    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>) -> !
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
+    state_save_dir: &str) -> !
 {
     debug!("handle_build_request started : {}", time::precise_time_ns());
     let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
@@ -682,6 +683,7 @@ fn handle_build_request(
             let mut r = mrs.get_mut(&mr_id).unwrap();
             r.status =
                 Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
+            save_state(state_save_dir, &project_set.name, mr_storage);
         }
 
         let (build_url, result_string) = perform_or_continue_jenkins_build(
@@ -696,6 +698,7 @@ fn handle_build_request(
             let mut r = mrs.get_mut(&mr_id).unwrap();
             r.status =
                 Status::Open(SubStatusOpen::WaitingForMerge);
+            save_state(state_save_dir, &project_set.name, mr_storage);
         }
 
         if result_string == "SUCCESS" {
@@ -941,6 +944,7 @@ fn main() {
                     .as_str().unwrap()
                     .to_owned());
         let ssd2 = state_save_dir.clone();
+        let ssd3 = ssd2.clone();
 
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
@@ -950,7 +954,7 @@ fn main() {
                     handle_comment(req, &*mrs2, &*queue3, &*psa, &*lsr2, &*ssd2));
 
         let builder = thread::spawn(move || {
-            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*lsr3);
+            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*lsr3, &*ssd3);
         });
         builders.push(builder);
     }
