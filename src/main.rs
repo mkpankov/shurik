@@ -510,7 +510,7 @@ fn handle_comment(
     }
 
     debug!("handle_comment finished      : {}", time::precise_time_ns());
-    return Ok(Response::with(status::Ok));
+    Ok(Response::with(status::Ok))
 }
 
 fn perform_or_continue_jenkins_build(
