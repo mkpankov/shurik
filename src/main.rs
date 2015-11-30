@@ -151,7 +151,7 @@ pub struct MrUid {
 
 impl Encodable for MrUid {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-        format!("[ {}, {} ]", self.id, self.target_project_id).encode(s)
+        format!("{},{}", self.id, self.target_project_id).encode(s)
     }
 }
 
