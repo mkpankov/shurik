@@ -721,6 +721,10 @@ fn handle_build_request(
             if let Status::Open(SubStatusOpen::WaitingForCi) = r.status {
                 r.status =
                     Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
+            }
+            if let Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(_, _))) = r.status {
+                ;
+            } else {
                 do_build = true;
             }
         }
