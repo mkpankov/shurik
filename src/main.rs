@@ -262,11 +262,14 @@ fn load_state(
     let mut path = PathBuf::from(state_save_dir);
     path.push(name);
     path.set_extension("state.json");
-    let mut file = File::open(path).unwrap();
-    let mut serialized = String::new();
-    file.read_to_string(&mut serialized).unwrap();
-    let mr_storage: HashMap<MrUid, MergeRequest> = json::decode(&serialized).unwrap();
-    mr_storage
+    if let Ok(mut file) = File::open(path) {
+        let mut serialized = String::new();
+        file.read_to_string(&mut serialized).unwrap();
+        let mr_storage: HashMap<MrUid, MergeRequest> = json::decode(&serialized).unwrap();
+        mr_storage
+    } else {
+        HashMap::new()
+    }
 }
 
 fn handle_mr(
@@ -831,6 +834,46 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     }
 }
 
+fn scan_state_and_schedule_jobs(
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    queue: &(Mutex<LinkedList<WorkerTask>>, Condvar))
+{
+    let mr_storage = &*mr_storage.lock().unwrap();
+    for mr in mr_storage.values() {
+        use Status::*;
+
+        let ref status = mr.status;
+        match *status {
+            Open(ref substatus_open) => {
+                use SubStatusOpen::*;
+
+                match *substatus_open {
+                    WaitingForCi | Building(_) => {
+                        let job_type = match mr.approval_status {
+                            ApprovalStatus::Approved => JobType::Merge,
+                            _ => JobType::Try,
+                        };
+                        let new_task = WorkerTask {
+                            id: mr.id,
+                            job_type: job_type,
+                            ssh_url: mr.ssh_url.clone(),
+                            approval_status: mr.approval_status,
+                            checkout_sha: mr.checkout_sha.clone(),
+                            human_number: mr.human_number,
+                        };
+                        let &(ref list, ref cvar) = queue;
+                        list.lock().unwrap().push_back(new_task);
+                        cvar.notify_one();
+                        info!("Notified...");
+                    },
+                    _ => {},
+                }
+            }
+            _ => {},
+        }
+    }
+}
+
 fn main() {
     env_logger::init().unwrap();
 
@@ -927,6 +970,9 @@ fn main() {
         debug!("Handling ProjectSet: {} = {:?}", psid, project_set);
 
         let psa = Arc::new(project_set);
+        let psa2 = psa.clone();
+        let psa3 = psa.clone();
+
         let projects = &psa.clone().projects;
         for (id, p) in projects {
             if let Some(ps) = reverse_project_map.insert(id.clone(), psid) {
@@ -934,18 +980,17 @@ fn main() {
             }
         }
         let mr_storage = load_state(state_save_dir, psid);
-        let mr_storage = Arc::new(Mutex::new(HashMap::new()));
+        let mr_storage = Arc::new(Mutex::new(mr_storage));
         let mrs2 = mr_storage.clone();
         let mrs3 = mrs2.clone();
+        let mrs4 = mrs3.clone();
 
         let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
+        let queue2 = queue.clone();
         let queue3 = queue.clone();
 
         let config2 = config.clone();
         let config3 = config2.clone();
-
-        let psa2 = psa.clone();
-        let psa3 = psa.clone();
 
         let linked_set_requests = Arc::new(Mutex::new(Vec::new()));
         let lsr2 = linked_set_requests.clone();
@@ -959,17 +1004,18 @@ fn main() {
         let ssd2 = state_save_dir.clone();
         let ssd3 = ssd2.clone();
 
+        let builder = thread::spawn(move || {
+            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*lsr3, &*ssd3);
+        });
+        builders.push(builder);
+        scan_state_and_schedule_jobs(&*mrs4, &*queue2);
+
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
                     handle_mr(req, &*mr_storage, &*psa3, &*linked_set_requests, &*state_save_dir));
         router.post(format!("/api/v1/{}/comment", psid),
                     move |req: &mut Request|
                     handle_comment(req, &*mrs2, &*queue3, &*psa, &*lsr2, &*ssd2));
-
-        let builder = thread::spawn(move || {
-            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*lsr3, &*ssd3);
-        });
-        builders.push(builder);
     }
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
