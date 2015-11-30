@@ -714,28 +714,51 @@ fn handle_build_request(
             "try"
         };
 
+        let mut do_build = false;
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            r.status =
-                Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
+            if let Status::Open(SubStatusOpen::WaitingForCi) = r.status {
+                r.status =
+                    Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
+                do_build = true;
+            }
         }
         save_state(state_save_dir, &project_set.name, mr_storage);
 
-        let (build_url, result_string) = perform_or_continue_jenkins_build(
-            &mr_id,
-            target_project_id,
-            mr_storage,
-            project_set,
-            config,
-            run_type,
-            state_save_dir);
+        let (build_url, result_string);
+        if do_build {
+            let result = perform_or_continue_jenkins_build(
+                &mr_id,
+                target_project_id,
+                mr_storage,
+                project_set,
+                config,
+                run_type,
+                state_save_dir);
+            build_url = result.0;
+            result_string = result.1;
+        } else {
+            let mrs = mr_storage.lock().unwrap();
+            let r = mrs.get(&mr_id).unwrap();
+            let ref status = r.status;
+            match *status {
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(ref bu, ref rs))) => {
+                    build_url = bu.clone();
+                    result_string = rs.clone();
+                }
+                _ => panic!("Expected finished build, but status is {:?}", status),
+            }
+        }
 
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            r.status =
-                Status::Open(SubStatusOpen::WaitingForMerge);
+            if let Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(_, _))) = r.status {
+                r.status =
+                    Status::Open(SubStatusOpen::WaitingForMerge);
+            }
+
         }
         save_state(state_save_dir, &project_set.name, mr_storage);
 
