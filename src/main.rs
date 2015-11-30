@@ -116,6 +116,7 @@ struct Project {
 
 #[derive(Debug, Clone)]
 struct ProjectSet {
+    name: String,
     projects: HashMap<i64, Project>,
 }
 
@@ -257,7 +258,8 @@ fn handle_mr(
     req: &mut Request,
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     project_set: &ProjectSet,
-    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
+    state_save_dir: &str)
     -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
     let ref mut body = req.body;
@@ -335,6 +337,7 @@ fn handle_mr(
             );
     }
 
+    save_state(state_save_dir, &project_set.name, mr_storage);
     debug!("handle_mr finished           : {}", time::precise_time_ns());
     Ok(Response::with(status::Ok))
 }
@@ -344,7 +347,8 @@ fn handle_comment(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     worker_queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     project_set: &ProjectSet,
-    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
+    state_save_dir: &str)
     -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
     info!("This thread handles projects: {:?}", project_set);
@@ -891,7 +895,7 @@ fn main() {
         }
         info!("Read projects: {:?}", projects);
 
-        let new_ps = ProjectSet { projects: projects };
+        let new_ps = ProjectSet { name: name.to_owned(), projects: projects };
         let new_ps_copy = new_ps.clone();
         if let Some(ps) = project_sets.insert(name, new_ps) {
             panic!("Project set with name {} is already defined: {:?}. Attempted to define another project set with such name: {:?}. The name must be unique.", name, ps, new_ps_copy);
@@ -930,12 +934,19 @@ fn main() {
         let lsr2 = linked_set_requests.clone();
         let lsr3 = lsr2.clone();
 
+        let state_save_dir =
+            Arc::new(
+                config.lookup("general.state-save-dir").unwrap()
+                    .as_str().unwrap()
+                    .to_owned());
+        let ssd2 = state_save_dir.clone();
+
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
-                    handle_mr(req, &*mr_storage, &*psa3, &*linked_set_requests));
+                    handle_mr(req, &*mr_storage, &*psa3, &*linked_set_requests, &*state_save_dir));
         router.post(format!("/api/v1/{}/comment", psid),
                     move |req: &mut Request|
-                    handle_comment(req, &*mrs2, &*queue3, &*psa, &*lsr2));
+                    handle_comment(req, &*mrs2, &*queue3, &*psa, &*lsr2, &*ssd2));
 
         let builder = thread::spawn(move || {
             handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*lsr3);
