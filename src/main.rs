@@ -16,10 +16,11 @@ extern crate toml;
 use clap::App;
 use hyper::Client;
 use iron::*;
+use rustc_serialize::json;
 
 use std::collections::{LinkedList, HashMap};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -233,6 +234,23 @@ fn update_or_create_mr(storage: &mut HashMap<MrUid, MergeRequest>,
 
     storage.insert(id, incoming);
     info!("Added MR: {:?}", storage[&id]);
+}
+
+fn save_state(
+    state_save_dir: &str,
+    name: &str,
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>)
+{
+    let serialized;
+    {
+        let mr_storage = &*mr_storage.lock().unwrap();
+        serialized = json::encode(mr_storage).unwrap();
+    }
+    let mut path = PathBuf::from(state_save_dir);
+    path.push(name);
+    path.set_extension("state.json");
+    let mut file = File::create(path).unwrap();
+    file.write_all(serialized.as_bytes()).unwrap();
 }
 
 fn handle_mr(
@@ -676,8 +694,7 @@ fn handle_build_request(
         }
 
         if result_string == "SUCCESS" {
-            if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id)
-            {
+            if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id) {
                 if new_request.checkout_sha == request.checkout_sha {
                     if request.approval_status != new_request.approval_status
                         && new_request.approval_status != ApprovalStatus::Approved
