@@ -1,3 +1,7 @@
+[general]
+
+state-save-dir = "/path/to/shurik/workspace"
+
 [gitlab]
 
 user = "foobar"

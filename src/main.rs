@@ -16,10 +16,12 @@ extern crate toml;
 use clap::App;
 use hyper::Client;
 use iron::*;
+use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
+use rustc_serialize::json::{self};
 
 use std::collections::{LinkedList, HashMap};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -39,8 +41,17 @@ enum SubStatusBuilding {
 
 #[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone)]
+enum SubStatusUpdating {
+    NotStarted,
+    InProgress,
+    Finished,
+}
+
+#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum SubStatusOpen {
     WaitingForReview,
+    Updating(SubStatusUpdating),
     WaitingForCi,
     Building(SubStatusBuilding),
     WaitingForMerge,
@@ -97,13 +108,6 @@ enum JobType {
     Merge
 }
 
-#[derive(RustcDecodable, RustcEncodable)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MrUid {
-    target_project_id: u64,
-    id: u64,
-}
-
 #[derive(Debug, Clone)]
 struct Project {
     id: i64,
@@ -115,6 +119,7 @@ struct Project {
 
 #[derive(Debug, Clone)]
 struct ProjectSet {
+    name: String,
     projects: HashMap<i64, Project>,
 }
 
@@ -136,6 +141,31 @@ struct MrLinkHuman {
 struct LinkedSet {
     id: u64,
     mrs: Vec<MergeRequest>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MrUid {
+    id: u64,
+    target_project_id: u64,
+}
+
+impl Encodable for MrUid {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        format!("{},{}", self.id, self.target_project_id).encode(s)
+    }
+}
+
+impl Decodable for MrUid {
+    fn decode<D: Decoder>(d: &mut D) -> Result<Self, D::Error> {
+        let s = try!(d.read_str());
+        let s_v: Vec<_> = s.split(",").collect();
+        let mut v: Vec<u64> = s_v.iter().map(|x| x.parse().unwrap()).collect();
+        let mr_uid = MrUid {
+            target_project_id: v.pop().unwrap(),
+            id: v.pop().unwrap(),
+        };
+        Ok(mr_uid)
+    }
 }
 
 struct MergeRequestBuilder {
@@ -235,11 +265,51 @@ fn update_or_create_mr(storage: &mut HashMap<MrUid, MergeRequest>,
     info!("Added MR: {:?}", storage[&id]);
 }
 
+fn save_state(
+    state_save_dir: &str,
+    name: &str,
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>)
+{
+    let serialized;
+    {
+        let mr_storage = &*mr_storage.lock().unwrap();
+        let maybe_serialized = json::encode(mr_storage);
+        match maybe_serialized {
+            Ok(s) => serialized = s,
+            Err(e) => panic!("Couldn't encode state to JSON: {}", e),
+        }
+    }
+    let mut path = PathBuf::from(state_save_dir);
+    path.push(name);
+    path.set_extension("state.json");
+    let mut file = File::create(path).unwrap();
+    file.write_all(serialized.as_bytes()).unwrap();
+}
+
+fn load_state(
+    state_save_dir: &str,
+    name: &str)
+    -> HashMap<MrUid, MergeRequest>
+{
+    let mut path = PathBuf::from(state_save_dir);
+    path.push(name);
+    path.set_extension("state.json");
+    if let Ok(mut file) = File::open(path) {
+        let mut serialized = String::new();
+        file.read_to_string(&mut serialized).unwrap();
+        let mr_storage: HashMap<MrUid, MergeRequest> = json::decode(&serialized).unwrap();
+        mr_storage
+    } else {
+        HashMap::new()
+    }
+}
+
 fn handle_mr(
     req: &mut Request,
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     project_set: &ProjectSet,
-    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
+    state_save_dir: &str)
     -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
     let ref mut body = req.body;
@@ -294,7 +364,7 @@ fn handle_mr(
         if target_project_name == linked_set_request.project_name
             && mr_human_number == linked_set_request.mr_human_number
         {
-            // TODO
+            // TO DO
         }
     }
     let id = MrUid { target_project_id: target_project_id, id: mr_id };
@@ -317,8 +387,9 @@ fn handle_mr(
             );
     }
 
+    save_state(state_save_dir, &project_set.name, mr_storage);
     debug!("handle_mr finished           : {}", time::precise_time_ns());
-    return Ok(Response::with(status::Ok));
+    Ok(Response::with(status::Ok))
 }
 
 fn handle_comment(
@@ -326,7 +397,8 @@ fn handle_comment(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     worker_queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     project_set: &ProjectSet,
-    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>)
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
+    state_save_dir: &str)
     -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
     info!("This thread handles projects: {:?}", project_set);
@@ -387,7 +459,7 @@ fn handle_comment(
                 "r+" | "одобряю" => {
                     if is_comment_author_reviewer {
                         old_statuses.push(Status::Open(SubStatusOpen::WaitingForReview));
-                        new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
+                        new_status = Some(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
                         new_approval_status = Some(ApprovalStatus::Approved);
                         needs_notification = true;
                     } else {
@@ -399,6 +471,7 @@ fn handle_comment(
                     if is_comment_author_reviewer {
                         old_statuses.push(Status::Open(SubStatusOpen::WaitingForCi));
                         old_statuses.push(Status::Open(SubStatusOpen::WaitingForMerge));
+                        old_statuses.push(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
                         new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
                         new_approval_status = Some(ApprovalStatus::Rejected);
                     } else {
@@ -441,7 +514,7 @@ fn handle_comment(
                     ;
                 },
                 "try" | "попробуй" => {
-                    new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
+                    new_status = Some(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
                     needs_notification = true;
                 },
                 _ => {
@@ -487,8 +560,9 @@ fn handle_comment(
         }
     }
 
+    save_state(state_save_dir, &project_set.name, mr_storage);
     debug!("handle_comment finished      : {}", time::precise_time_ns());
-    return Ok(Response::with(status::Ok));
+    Ok(Response::with(status::Ok))
 }
 
 fn perform_or_continue_jenkins_build(
@@ -496,7 +570,8 @@ fn perform_or_continue_jenkins_build(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     project_set: &ProjectSet,
     config: &toml::Value,
-    run_type: &str)
+    run_type: &str,
+    state_save_dir: &str)
     -> (String, String)
 {
     use SubStatusBuilding::*;
@@ -513,6 +588,7 @@ fn perform_or_continue_jenkins_build(
     {
         let mrs = mr_storage.lock().unwrap();
         let mr = mrs.get(&mr_id).unwrap();
+        debug!("MR to work on: {:?}", mr);
         current_status = mr.status.clone();
     };
     if let Status::Open(sso) = current_status {
@@ -528,32 +604,42 @@ fn perform_or_continue_jenkins_build(
     if let NotStarted = current_build_status {
         let queue_item_url = jenkins::enqueue_build(workspace_dir, http_user, http_password, jenkins_job_url, run_type);
         info!("Queue item URL: {}", queue_item_url);
-        let mut mrs = mr_storage.lock().unwrap();
-        let mut r = mrs.get_mut(&mr_id).unwrap();
-        r.status =
-            Status::Open(SubStatusOpen::Building(SubStatusBuilding::Queued(
-                queue_item_url.clone())));
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Queued(
+                    queue_item_url.clone())));
+        }
         current_build_status = Queued(queue_item_url.clone());
+        save_state(state_save_dir, &project_set.name, mr_storage);
     }
+
     if let Queued(queue_item_url) = current_build_status {
         let build_url = jenkins::poll_queue(workspace_dir, http_user, http_password, &queue_item_url);
         info!("Build job URL: {}", queue_item_url);
-        let mut mrs = mr_storage.lock().unwrap();
-        let mut r = mrs.get_mut(&mr_id).unwrap();
-        r.status =
-            Status::Open(SubStatusOpen::Building(SubStatusBuilding::InProgress(
-                build_url.clone())));
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::InProgress(
+                    build_url.clone())));
+        }
         current_build_status = InProgress(build_url.clone());
+        save_state(state_save_dir, &project_set.name, mr_storage);
     }
     if let InProgress(build_url) = current_build_status {
         let result = jenkins::poll_build(workspace_dir, http_user, http_password, &build_url);
         info!("Result: {}", result);
-        let mut mrs = mr_storage.lock().unwrap();
-        let mut r = mrs.get_mut(&mr_id).unwrap();
-        r.status =
-            Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(
-                build_url.clone(), result.clone())));
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(
+                    build_url.clone(), result.clone())));
+        }
         current_build_status = Finished(build_url.clone(), result.clone());
+        save_state(state_save_dir, &project_set.name, mr_storage);
     }
     if let Finished(build_url, result) = current_build_status {
         (build_url, result)
@@ -567,7 +653,8 @@ fn handle_build_request(
     queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     config: &toml::Value,
     project_set: &ProjectSet,
-    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>) -> !
+    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
+    state_save_dir: &str) -> !
 {
     debug!("handle_build_request started : {}", time::precise_time_ns());
     let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
@@ -621,27 +708,54 @@ fn handle_build_request(
             }
         }
 
-        let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
-        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-
-        git::set_remote_url(workspace_dir, &ssh_url);
-        git::set_user(workspace_dir, "Shurik", "shurik@example.com");
-        git::fetch(workspace_dir, key_path);
-        git::reset_hard(workspace_dir, None);
-
-        git::checkout(workspace_dir, "master");
-        git::reset_hard(workspace_dir, Some("origin/master"));
-        git::checkout(workspace_dir, "try");
-        git::reset_hard(workspace_dir, Some(&arg));
-        match git::merge(workspace_dir, "master", mr_human_number, false) {
-            Ok(_) => {},
-            Err(_) => {
-                let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
-                gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-                continue;
+        let mut do_update = false;
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            if let Status::Open(SubStatusOpen::Updating(SubStatusUpdating::Finished)) = r.status {
+                ;
+            } else {
+                if let Status::Open(SubStatusOpen::Updating(_)) = r.status {
+                    r.status =
+                        Status::Open(SubStatusOpen::Updating(SubStatusUpdating::InProgress));
+                    do_update = true;
+                }
             }
         }
-        git::push(workspace_dir, key_path, true);
+        save_state(state_save_dir, &project_set.name, mr_storage);
+
+        if do_update {
+            let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
+            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+
+            git::set_remote_url(workspace_dir, &ssh_url);
+            git::set_user(workspace_dir, "Shurik", "shurik@example.com");
+            git::fetch(workspace_dir, key_path);
+            git::reset_hard(workspace_dir, None);
+
+            git::checkout(workspace_dir, "master");
+            git::reset_hard(workspace_dir, Some("origin/master"));
+            git::checkout(workspace_dir, "try");
+            git::reset_hard(workspace_dir, Some(&arg));
+            match git::merge(workspace_dir, "master", mr_human_number, false) {
+                Ok(_) => {},
+                Err(_) => {
+                    let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
+                    gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                    continue;
+                }
+            }
+            git::push(workspace_dir, key_path, true);
+        }
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            if let Status::Open(SubStatusOpen::Updating(SubStatusUpdating::InProgress)) = r.status {
+                r.status =
+                    Status::Open(SubStatusOpen::Updating(SubStatusUpdating::Finished));
+            }
+        }
+        save_state(state_save_dir, &project_set.name, mr_storage);
 
         let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
         let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
@@ -653,31 +767,71 @@ fn handle_build_request(
         } else {
             "try"
         };
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            if let Status::Open(SubStatusOpen::Updating(SubStatusUpdating::Finished)) = r.status {
+                r.status =
+                    Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
+            }
+        }
+        save_state(state_save_dir, &project_set.name, mr_storage);
+
+        let mut do_build = false;
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            if let Status::Open(SubStatusOpen::WaitingForCi) = r.status {
+                r.status =
+                    Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
+            }
+            if let Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(_, _))) = r.status {
+                ;
+            } else {
+                if let Status::Open(SubStatusOpen::Building(_)) = r.status {
+                    do_build = true;
+                }
+            }
+        }
+        save_state(state_save_dir, &project_set.name, mr_storage);
+
+        let (build_url, result_string);
+        if do_build {
+            let result = perform_or_continue_jenkins_build(
+                &mr_id,
+                mr_storage,
+                project_set,
+                config,
+                run_type,
+                state_save_dir);
+            build_url = result.0;
+            result_string = result.1;
+        } else {
+            let mrs = mr_storage.lock().unwrap();
+            let r = mrs.get(&mr_id).unwrap();
+            let ref status = r.status;
+            match *status {
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(ref bu, ref rs))) => {
+                    build_url = bu.clone();
+                    result_string = rs.clone();
+                }
+                _ => panic!("Expected finished build, but status is {:?}", status),
+            }
+        }
 
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            r.status =
-                Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
-        }
+            if let Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(_, _))) = r.status {
+                r.status =
+                    Status::Open(SubStatusOpen::WaitingForMerge);
+            }
 
-        let (build_url, result_string) = perform_or_continue_jenkins_build(
-            &mr_id,
-            mr_storage,
-            project_set,
-            config,
-            run_type);
-
-        {
-            let mut mrs = mr_storage.lock().unwrap();
-            let mut r = mrs.get_mut(&mr_id).unwrap();
-            r.status =
-                Status::Open(SubStatusOpen::WaitingForMerge);
         }
+        save_state(state_save_dir, &project_set.name, mr_storage);
 
         if result_string == "SUCCESS" {
-            if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id)
-            {
+            if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id) {
                 if new_request.checkout_sha == request.checkout_sha {
                     if request.approval_status != new_request.approval_status
                         && new_request.approval_status != ApprovalStatus::Approved
@@ -709,11 +863,6 @@ fn handle_build_request(
                 info!("Merging");
                 let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-                {
-                    let mut mr_storage_locked = mr_storage.lock().unwrap();
-                    let mut request = mr_storage_locked.get_mut(&mr_id).unwrap();
-                    request.status = Status::Open(SubStatusOpen::WaitingForMerge);
-                }
                 git::checkout(workspace_dir, "master");
                 match git::merge(workspace_dir, "try", mr_human_number, true) {
                     Ok(_) => {},
@@ -730,6 +879,7 @@ fn handle_build_request(
                     // MR was merged, removing
                     mr_storage_locked.remove(&mr_id);
                 }
+                save_state(state_save_dir, &project_set.name, mr_storage);
                 info!("Updated existing MR");
                 let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
@@ -791,6 +941,46 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
             let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: #{}\"}}", arg);
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
             return;
+        }
+    }
+}
+
+fn scan_state_and_schedule_jobs(
+    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    queue: &(Mutex<LinkedList<WorkerTask>>, Condvar))
+{
+    let mr_storage = &*mr_storage.lock().unwrap();
+    for mr in mr_storage.values() {
+        use Status::*;
+
+        let ref status = mr.status;
+        match *status {
+            Open(ref substatus_open) => {
+                use SubStatusOpen::*;
+
+                match *substatus_open {
+                    WaitingForCi | Building(_) => {
+                        let job_type = match mr.approval_status {
+                            ApprovalStatus::Approved => JobType::Merge,
+                            _ => JobType::Try,
+                        };
+                        let new_task = WorkerTask {
+                            id: mr.id,
+                            job_type: job_type,
+                            ssh_url: mr.ssh_url.clone(),
+                            approval_status: mr.approval_status,
+                            checkout_sha: mr.checkout_sha.clone(),
+                            human_number: mr.human_number,
+                        };
+                        let &(ref list, ref cvar) = queue;
+                        list.lock().unwrap().push_back(new_task);
+                        cvar.notify_one();
+                        info!("Notified...");
+                    },
+                    _ => {},
+                }
+            }
+            _ => {},
         }
     }
 }
@@ -874,7 +1064,7 @@ fn main() {
         }
         info!("Read projects: {:?}", projects);
 
-        let new_ps = ProjectSet { projects: projects };
+        let new_ps = ProjectSet { name: name.to_owned(), projects: projects };
         let new_ps_copy = new_ps.clone();
         if let Some(ps) = project_sets.insert(name, new_ps) {
             panic!("Project set with name {} is already defined: {:?}. Attempted to define another project set with such name: {:?}. The name must be unique.", name, ps, new_ps_copy);
@@ -883,6 +1073,7 @@ fn main() {
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
+    let state_save_dir = config.lookup("general.state-save-dir").unwrap().as_str().unwrap();
 
     for (psid, project_set) in project_sets.into_iter() {
         let mut reverse_project_map = HashMap::new();
@@ -890,40 +1081,52 @@ fn main() {
         debug!("Handling ProjectSet: {} = {:?}", psid, project_set);
 
         let psa = Arc::new(project_set);
+        let psa2 = psa.clone();
+        let psa3 = psa.clone();
+
         let projects = &psa.clone().projects;
         for (id, p) in projects {
             if let Some(ps) = reverse_project_map.insert(id.clone(), psid) {
                 panic!("A project with id {}: {:?} is already present in project set with id {}: {:?}. Project can be present only in one project set.", id, p, psid, ps);
             }
         }
-        let mr_storage = Arc::new(Mutex::new(HashMap::new()));
+        let mr_storage = load_state(state_save_dir, psid);
+        let mr_storage = Arc::new(Mutex::new(mr_storage));
         let mrs2 = mr_storage.clone();
         let mrs3 = mrs2.clone();
+        let mrs4 = mrs3.clone();
 
         let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
+        let queue2 = queue.clone();
         let queue3 = queue.clone();
 
         let config2 = config.clone();
         let config3 = config2.clone();
 
-        let psa2 = psa.clone();
-        let psa3 = psa.clone();
-
         let linked_set_requests = Arc::new(Mutex::new(Vec::new()));
         let lsr2 = linked_set_requests.clone();
         let lsr3 = lsr2.clone();
 
-        router.post(format!("/api/v1/{}/mr", psid),
-                    move |req: &mut Request|
-                    handle_mr(req, &*mr_storage, &*psa3, &*linked_set_requests));
-        router.post(format!("/api/v1/{}/comment", psid),
-                    move |req: &mut Request|
-                    handle_comment(req, &*mrs2, &*queue3, &*psa, &*lsr2));
+        let state_save_dir =
+            Arc::new(
+                config.lookup("general.state-save-dir").unwrap()
+                    .as_str().unwrap()
+                    .to_owned());
+        let ssd2 = state_save_dir.clone();
+        let ssd3 = ssd2.clone();
 
         let builder = thread::spawn(move || {
-            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*lsr3);
+            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*lsr3, &*ssd3);
         });
         builders.push(builder);
+        scan_state_and_schedule_jobs(&*mrs4, &*queue2);
+
+        router.post(format!("/api/v1/{}/mr", psid),
+                    move |req: &mut Request|
+                    handle_mr(req, &*mr_storage, &*psa3, &*linked_set_requests, &*state_save_dir));
+        router.post(format!("/api/v1/{}/comment", psid),
+                    move |req: &mut Request|
+                    handle_comment(req, &*mrs2, &*queue3, &*psa, &*lsr2, &*ssd2));
     }
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
