@@ -542,7 +542,8 @@ fn perform_or_continue_jenkins_build(
     mr_storage: &Mutex<HashMap<u64, MergeRequest>>,
     project_set: &ProjectSet,
     config: &toml::Value,
-    run_type: &str)
+    run_type: &str,
+    state_save_dir: &str)
     -> (String, String)
 {
     use SubStatusBuilding::*;
@@ -559,6 +560,7 @@ fn perform_or_continue_jenkins_build(
     {
         let mrs = mr_storage.lock().unwrap();
         let mr = mrs.get(&mr_id).unwrap();
+        debug!("MR to work on: {:?}", mr);
         current_status = mr.status.clone();
     };
     if let Status::Open(sso) = current_status {
@@ -574,32 +576,42 @@ fn perform_or_continue_jenkins_build(
     if let NotStarted = current_build_status {
         let queue_item_url = jenkins::enqueue_build(workspace_dir, http_user, http_password, jenkins_job_url, run_type);
         info!("Queue item URL: {}", queue_item_url);
-        let mut mrs = mr_storage.lock().unwrap();
-        let mut r = mrs.get_mut(&mr_id).unwrap();
-        r.status =
-            Status::Open(SubStatusOpen::Building(SubStatusBuilding::Queued(
-                queue_item_url.clone())));
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Queued(
+                    queue_item_url.clone())));
+        }
         current_build_status = Queued(queue_item_url.clone());
+        save_state(state_save_dir, &project_set.name, mr_storage);
     }
+
     if let Queued(queue_item_url) = current_build_status {
         let build_url = jenkins::poll_queue(workspace_dir, http_user, http_password, &queue_item_url);
         info!("Build job URL: {}", queue_item_url);
-        let mut mrs = mr_storage.lock().unwrap();
-        let mut r = mrs.get_mut(&mr_id).unwrap();
-        r.status =
-            Status::Open(SubStatusOpen::Building(SubStatusBuilding::InProgress(
-                build_url.clone())));
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::InProgress(
+                    build_url.clone())));
+        }
         current_build_status = InProgress(build_url.clone());
+        save_state(state_save_dir, &project_set.name, mr_storage);
     }
     if let InProgress(build_url) = current_build_status {
         let result = jenkins::poll_build(workspace_dir, http_user, http_password, &build_url);
         info!("Result: {}", result);
-        let mut mrs = mr_storage.lock().unwrap();
-        let mut r = mrs.get_mut(&mr_id).unwrap();
-        r.status =
-            Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(
-                build_url.clone(), result.clone())));
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            r.status =
+                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(
+                    build_url.clone(), result.clone())));
+        }
         current_build_status = Finished(build_url.clone(), result.clone());
+        save_state(state_save_dir, &project_set.name, mr_storage);
     }
     if let Finished(build_url, result) = current_build_status {
         (build_url, result)
@@ -716,7 +728,8 @@ fn handle_build_request(
             mr_storage,
             project_set,
             config,
-            run_type);
+            run_type,
+            state_save_dir);
 
         {
             let mut mrs = mr_storage.lock().unwrap();
