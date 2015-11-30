@@ -40,8 +40,17 @@ enum SubStatusBuilding {
 
 #[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone)]
+enum SubStatusUpdating {
+    NotStarted,
+    InProgress,
+    Finished,
+}
+
+#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum SubStatusOpen {
     WaitingForReview,
+    Updating(SubStatusUpdating),
     WaitingForCi,
     Building(SubStatusBuilding),
     WaitingForMerge,
@@ -430,7 +439,7 @@ fn handle_comment(
                 "r+" | "одобряю" => {
                     if is_comment_author_reviewer {
                         old_statuses.push(Status::Open(SubStatusOpen::WaitingForReview));
-                        new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
+                        new_status = Some(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
                         new_approval_status = Some(ApprovalStatus::Approved);
                         needs_notification = true;
                     } else {
@@ -442,6 +451,7 @@ fn handle_comment(
                     if is_comment_author_reviewer {
                         old_statuses.push(Status::Open(SubStatusOpen::WaitingForCi));
                         old_statuses.push(Status::Open(SubStatusOpen::WaitingForMerge));
+                        old_statuses.push(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
                         new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
                         new_approval_status = Some(ApprovalStatus::Rejected);
                     } else {
@@ -484,7 +494,7 @@ fn handle_comment(
                     ;
                 },
                 "try" | "попробуй" => {
-                    new_status = Some(Status::Open(SubStatusOpen::WaitingForCi));
+                    new_status = Some(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
                     needs_notification = true;
                 },
                 _ => {
@@ -681,27 +691,52 @@ fn handle_build_request(
             }
         }
 
-        let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
-        gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
-
-        git::set_remote_url(workspace_dir, &ssh_url);
-        git::set_user(workspace_dir, "Shurik", "shurik@example.com");
-        git::fetch(workspace_dir, key_path);
-        git::reset_hard(workspace_dir, None);
-
-        git::checkout(workspace_dir, "master");
-        git::reset_hard(workspace_dir, Some("origin/master"));
-        git::checkout(workspace_dir, "try");
-        git::reset_hard(workspace_dir, Some(&arg));
-        match git::merge(workspace_dir, "master", mr_human_number, false) {
-            Ok(_) => {},
-            Err(_) => {
-                let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
-                gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
-                continue;
+        let mut do_update = false;
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            if let Status::Open(SubStatusOpen::Updating(SubStatusUpdating::Finished)) = r.status {
+                ;
+            } else {
+                r.status =
+                    Status::Open(SubStatusOpen::Updating(SubStatusUpdating::InProgress));
+                do_update = true;
             }
         }
-        git::push(workspace_dir, key_path, true);
+        save_state(state_save_dir, &project_set.name, mr_storage);
+
+        if do_update {
+            let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
+            gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
+
+            git::set_remote_url(workspace_dir, &ssh_url);
+            git::set_user(workspace_dir, "Shurik", "shurik@example.com");
+            git::fetch(workspace_dir, key_path);
+            git::reset_hard(workspace_dir, None);
+
+            git::checkout(workspace_dir, "master");
+            git::reset_hard(workspace_dir, Some("origin/master"));
+            git::checkout(workspace_dir, "try");
+            git::reset_hard(workspace_dir, Some(&arg));
+            match git::merge(workspace_dir, "master", mr_human_number, false) {
+                Ok(_) => {},
+                Err(_) => {
+                    let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
+                    gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
+                    continue;
+                }
+            }
+            git::push(workspace_dir, key_path, true);
+        }
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            if let Status::Open(SubStatusOpen::Updating(SubStatusUpdating::InProgress)) = r.status {
+                r.status =
+                    Status::Open(SubStatusOpen::Updating(SubStatusUpdating::Finished));
+            }
+        }
+        save_state(state_save_dir, &project_set.name, mr_storage);
 
         let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
         let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
