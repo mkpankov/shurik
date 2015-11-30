@@ -336,7 +336,7 @@ fn handle_mr(
     }
 
     debug!("handle_mr finished           : {}", time::precise_time_ns());
-    return Ok(Response::with(status::Ok));
+    Ok(Response::with(status::Ok))
 }
 
 fn handle_comment(
