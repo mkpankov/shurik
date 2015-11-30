@@ -157,20 +157,12 @@ impl Encodable for MrUid {
 
 impl Decodable for MrUid {
     fn decode<D: Decoder>(d: &mut D) -> Result<Self, D::Error> {
-        let mut v = Vec::new();
-        let mut r_v = try!(d.read_seq(|d, len| {
-            if len != 2 {
-                return Err(d.error("wrong array length for MrUid"));
-            }
-            let val = try!(d.read_seq_elt(0, |d| Decodable::decode(d)));
-            v.push(val);
-            let val = try!(d.read_seq_elt(1, |d| Decodable::decode(d)));
-            v.push(val);
-            Ok(v)
-        }));
+        let s = try!(d.read_str());
+        let s_v: Vec<_> = s.split(",").collect();
+        let mut v: Vec<u64> = s_v.iter().map(|x| x.parse().unwrap()).collect();
         let mr_uid = MrUid {
-            target_project_id: r_v.pop().unwrap(),
-            id: r_v.pop().unwrap(),
+            target_project_id: v.pop().unwrap(),
+            id: v.pop().unwrap(),
         };
         Ok(mr_uid)
     }
