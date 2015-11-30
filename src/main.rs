@@ -749,6 +749,7 @@ fn handle_build_request(
                     let mut mr_storage_locked = mr_storage.lock().unwrap();
                     // MR was merged, removing
                     mr_storage_locked.remove(&mr_id);
+                    save_state(state_save_dir, &project_set.name, mr_storage);
                 }
                 info!("Updated existing MR");
                 let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
