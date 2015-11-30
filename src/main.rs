@@ -509,6 +509,7 @@ fn handle_comment(
         }
     }
 
+    save_state(state_save_dir, &project_set.name, mr_storage);
     debug!("handle_comment finished      : {}", time::precise_time_ns());
     Ok(Response::with(status::Ok))
 }
