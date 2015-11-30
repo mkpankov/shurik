@@ -698,9 +698,11 @@ fn handle_build_request(
             if let Status::Open(SubStatusOpen::Updating(SubStatusUpdating::Finished)) = r.status {
                 ;
             } else {
-                r.status =
-                    Status::Open(SubStatusOpen::Updating(SubStatusUpdating::InProgress));
-                do_update = true;
+                if let Status::Open(SubStatusOpen::Updating(_)) = r.status {
+                    r.status =
+                        Status::Open(SubStatusOpen::Updating(SubStatusUpdating::InProgress));
+                    do_update = true;
+                }
             }
         }
         save_state(state_save_dir, &project_set.name, mr_storage);
@@ -748,6 +750,15 @@ fn handle_build_request(
         } else {
             "try"
         };
+        {
+            let mut mrs = mr_storage.lock().unwrap();
+            let mut r = mrs.get_mut(&mr_id).unwrap();
+            if let Status::Open(SubStatusOpen::Updating(SubStatusUpdating::Finished)) = r.status {
+                r.status =
+                    Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
+            }
+        }
+        save_state(state_save_dir, &project_set.name, mr_storage);
 
         let mut do_build = false;
         {
@@ -760,7 +771,9 @@ fn handle_build_request(
             if let Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(_, _))) = r.status {
                 ;
             } else {
-                do_build = true;
+                if let Status::Open(SubStatusOpen::Building(_)) = r.status {
+                    do_build = true;
+                }
             }
         }
         save_state(state_save_dir, &project_set.name, mr_storage);
