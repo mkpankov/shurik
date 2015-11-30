@@ -73,7 +73,8 @@ enum MergeStatus {
 #[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, Clone)]
 struct MergeRequest {
-    id: MrUid,
+    id: u64,
+    target_project_id: u64,
     human_number: u64,
     ssh_url: String,
     checkout_sha: String,
@@ -84,7 +85,8 @@ struct MergeRequest {
 
 #[derive(Debug)]
 struct WorkerTask {
-    id: MrUid,
+    id: u64,
+    target_project_id: u64,
     human_number: u64,
     ssh_url: String,
     checkout_sha: String,
@@ -96,13 +98,6 @@ struct WorkerTask {
 enum JobType {
     Try,
     Merge
-}
-
-#[derive(RustcDecodable, RustcEncodable)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MrUid {
-    target_project_id: u64,
-    id: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -141,9 +136,10 @@ struct LinkedSet {
 }
 
 struct MergeRequestBuilder {
-    id: MrUid,
+    id: u64,
     ssh_url: String,
     human_number: u64,
+    target_project_id: u64,
     checkout_sha: Option<String>,
     status: Option<Status>,
     approval_status: Option<ApprovalStatus>,
@@ -151,11 +147,12 @@ struct MergeRequestBuilder {
 }
 
 impl MergeRequestBuilder {
-    fn new(id: MrUid, ssh_url: String, human_number: u64) -> Self {
+    fn new(id: u64, ssh_url: String, human_number: u64, target_project_id: u64) -> Self {
         MergeRequestBuilder {
             id: id,
             ssh_url: ssh_url,
             human_number: human_number,
+            target_project_id: target_project_id,
             checkout_sha: None,
             status: None,
             approval_status: None,
@@ -184,6 +181,7 @@ impl MergeRequestBuilder {
                 id: self.id,
                 ssh_url: self.ssh_url,
                 human_number: self.human_number,
+                target_project_id: self.target_project_id,
                 checkout_sha: checkout_sha,
                 status: status,
                 approval_status: approval_status,
@@ -195,10 +193,11 @@ impl MergeRequestBuilder {
     }
 }
 
-fn update_or_create_mr(storage: &mut HashMap<MrUid, MergeRequest>,
-                       id: MrUid,
+fn update_or_create_mr(storage: &mut HashMap<u64, MergeRequest>,
+                       id: u64,
                        ssh_url: &str,
                        human_number: u64,
+                       target_project_id: u64,
                        old_statuses: &[Status],
                        new_checkout_sha: Option<&str>,
                        new_status: Option<Status>,
@@ -225,7 +224,7 @@ fn update_or_create_mr(storage: &mut HashMap<MrUid, MergeRequest>,
         return;
     }
 
-    let incoming = MergeRequestBuilder::new(id, ssh_url.to_owned(), human_number)
+    let incoming = MergeRequestBuilder::new(id, ssh_url.to_owned(), human_number, target_project_id)
         .with_checkout_sha(new_checkout_sha.unwrap())
         .with_status(new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)))
         .with_approval_status(new_approval_status.unwrap_or(ApprovalStatus::Pending))
@@ -240,12 +239,16 @@ fn update_or_create_mr(storage: &mut HashMap<MrUid, MergeRequest>,
 fn save_state(
     state_save_dir: &str,
     name: &str,
-    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>)
+    mr_storage: &Mutex<HashMap<u64, MergeRequest>>)
 {
     let serialized;
     {
         let mr_storage = &*mr_storage.lock().unwrap();
-        serialized = json::encode(mr_storage).unwrap();
+        let maybe_serialized = json::encode(mr_storage);
+        match maybe_serialized {
+            Ok(s) => serialized = s,
+            Err(e) => panic!("Couldn't encode state to JSON: {}", e),
+        }
     }
     let mut path = PathBuf::from(state_save_dir);
     path.push(name);
@@ -257,7 +260,7 @@ fn save_state(
 fn load_state(
     state_save_dir: &str,
     name: &str)
-    -> HashMap<MrUid, MergeRequest>
+    -> HashMap<u64, MergeRequest>
 {
     let mut path = PathBuf::from(state_save_dir);
     path.push(name);
@@ -265,7 +268,7 @@ fn load_state(
     if let Ok(mut file) = File::open(path) {
         let mut serialized = String::new();
         file.read_to_string(&mut serialized).unwrap();
-        let mr_storage: HashMap<MrUid, MergeRequest> = json::decode(&serialized).unwrap();
+        let mr_storage: HashMap<u64, MergeRequest> = json::decode(&serialized).unwrap();
         mr_storage
     } else {
         HashMap::new()
@@ -274,7 +277,7 @@ fn load_state(
 
 fn handle_mr(
     req: &mut Request,
-    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    mr_storage: &Mutex<HashMap<u64, MergeRequest>>,
     project_set: &ProjectSet,
     linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
     state_save_dir: &str)
@@ -335,18 +338,18 @@ fn handle_mr(
             // TODO
         }
     }
-    let id = MrUid { target_project_id: target_project_id, id: mr_id };
     if let Status::Open(_) = new_status {
         ;
     } else {
-        mr_storage.lock().unwrap().remove(&id);
+        mr_storage.lock().unwrap().remove(&mr_id);
     }
     {
         update_or_create_mr(
             &mut *mr_storage.lock().unwrap(),
-            id,
+            mr_id,
             ssh_url,
             mr_human_number,
+            target_project_id,
             &[],
             Some(checkout_sha),
             Some(new_status),
@@ -362,7 +365,7 @@ fn handle_mr(
 
 fn handle_comment(
     req: &mut Request,
-    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    mr_storage: &Mutex<HashMap<u64, MergeRequest>>,
     worker_queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     project_set: &ProjectSet,
     linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
@@ -492,12 +495,12 @@ fn handle_comment(
         }
     }
     {
-        let id = MrUid { target_project_id: target_project_id, id: mr_id };
         update_or_create_mr(
             &mut *mr_storage.lock().unwrap(),
-            id,
+            mr_id,
             ssh_url,
             mr_human_number,
+            target_project_id,
             &old_statuses,
             Some(&last_commit_id),
             new_status,
@@ -512,7 +515,8 @@ fn handle_comment(
                 _ => JobType::Try,
             };
             let new_task = WorkerTask {
-                id: id,
+                id: mr_id,
+                target_project_id: target_project_id,
                 human_number: mr_human_number,
                 ssh_url: ssh_url.to_owned(),
                 checkout_sha: last_commit_id,
@@ -533,8 +537,9 @@ fn handle_comment(
 }
 
 fn perform_or_continue_jenkins_build(
-    mr_id: &MrUid,
-    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    mr_id: &u64,
+    target_project_id: u64,
+    mr_storage: &Mutex<HashMap<u64, MergeRequest>>,
     project_set: &ProjectSet,
     config: &toml::Value,
     run_type: &str)
@@ -544,7 +549,7 @@ fn perform_or_continue_jenkins_build(
     let mut current_build_status: SubStatusBuilding;
 
     let projects = &project_set.projects;
-    let project = &projects[&(mr_id.target_project_id as i64)];
+    let project = &projects[&(target_project_id as i64)];
     let workspace_dir = &project.workspace_dir.to_str().unwrap();
     let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
     let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
@@ -604,7 +609,7 @@ fn perform_or_continue_jenkins_build(
 }
 
 fn handle_build_request(
-    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    mr_storage: &Mutex<HashMap<u64, MergeRequest>>,
     queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     config: &toml::Value,
     project_set: &ProjectSet,
@@ -649,10 +654,11 @@ fn handle_build_request(
 
         let arg = request.checkout_sha.clone();
         let mr_id = request.id;
+        let target_project_id = request.target_project_id;
         let mr_human_number = request.human_number;
         let ssh_url = request.ssh_url.clone();
         let projects = &project_set.projects;
-        let project = &projects[&(mr_id.target_project_id as i64)];
+        let project = &projects[&(request.target_project_id as i64)];
         let workspace_dir = &project.workspace_dir.to_str().unwrap();
 
         for lsr in &*linked_set_requests.lock().unwrap() {
@@ -664,7 +670,7 @@ fn handle_build_request(
         }
 
         let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит #{}\"}}", arg);
-        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+        gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
 
         git::set_remote_url(workspace_dir, &ssh_url);
         git::set_user(workspace_dir, "Shurik", "shurik@example.com");
@@ -679,7 +685,7 @@ fn handle_build_request(
             Ok(_) => {},
             Err(_) => {
                 let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
-                gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
                 continue;
             }
         }
@@ -701,11 +707,12 @@ fn handle_build_request(
             let mut r = mrs.get_mut(&mr_id).unwrap();
             r.status =
                 Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
-            save_state(state_save_dir, &project_set.name, mr_storage);
         }
+        save_state(state_save_dir, &project_set.name, mr_storage);
 
         let (build_url, result_string) = perform_or_continue_jenkins_build(
             &mr_id,
+            target_project_id,
             mr_storage,
             project_set,
             config,
@@ -716,8 +723,8 @@ fn handle_build_request(
             let mut r = mrs.get_mut(&mr_id).unwrap();
             r.status =
                 Status::Open(SubStatusOpen::WaitingForMerge);
-            save_state(state_save_dir, &project_set.name, mr_storage);
         }
+        save_state(state_save_dir, &project_set.name, mr_storage);
 
         if result_string == "SUCCESS" {
             if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id) {
@@ -727,7 +734,7 @@ fn handle_build_request(
                     {
                         info!("The MR was rejected in the meantime, not merging");
                         let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, коммит запретили. Не сливаю\"}}");
-                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
                         continue;
                     } else {
                         info!("MR has new comments, and head is same commit, so it doesn't make sense to account for changes");
@@ -735,7 +742,7 @@ fn handle_build_request(
                 } else {
                     info!("MR head is different commit, not merging");
                     let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR обновился. Не сливаю\"}}");
-                    gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                    gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
                     continue;
                 }
             }
@@ -751,13 +758,13 @@ fn handle_build_request(
             if do_merge {
                 info!("Merging");
                 let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
-                gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
                 git::checkout(workspace_dir, "master");
                 match git::merge(workspace_dir, "try", mr_human_number, true) {
                     Ok(_) => {},
                     Err(_) => {
                         let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
-                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
                         continue;
                     },
                 }
@@ -767,11 +774,11 @@ fn handle_build_request(
                     let mut mr_storage_locked = mr_storage.lock().unwrap();
                     // MR was merged, removing
                     mr_storage_locked.remove(&mr_id);
-                    save_state(state_save_dir, &project_set.name, mr_storage);
                 }
+                save_state(state_save_dir, &project_set.name, mr_storage);
                 info!("Updated existing MR");
                 let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
-                gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
 
                 for mr in mr_storage.lock().unwrap().values() {
                     info!("MR to try merge: {:?}", mr);
@@ -794,7 +801,7 @@ fn handle_build_request(
 
         let message = &*format!("{{ \"note\": \"{} тестирование завершено [{}]({})\"}}", indicator, build_result_message, build_url);
 
-        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+        gitlab::post_comment(gitlab_api_root, private_token, mr_id, target_project_id, message);
 
         debug!("handle_build_request finished: {}", time::precise_time_ns());
     }
@@ -814,7 +821,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     debug!("{:?}", mr.status);
     if merge_status != MergeStatus::CanBeMerged {
         let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: #{}\"}}", arg);
-        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+        gitlab::post_comment(gitlab_api_root, private_token, mr_id, mr.target_project_id, message);
         return;
     }
     git::reset_hard(workspace_dir, None);
@@ -828,14 +835,14 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
         Ok(_) => {},
         Err(_) => {
             let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: #{}\"}}", arg);
-            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            gitlab::post_comment(gitlab_api_root, private_token, mr_id, mr.target_project_id, message);
             return;
         }
     }
 }
 
 fn scan_state_and_schedule_jobs(
-    mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    mr_storage: &Mutex<HashMap<u64, MergeRequest>>,
     queue: &(Mutex<LinkedList<WorkerTask>>, Condvar))
 {
     let mr_storage = &*mr_storage.lock().unwrap();
@@ -855,6 +862,7 @@ fn scan_state_and_schedule_jobs(
                         };
                         let new_task = WorkerTask {
                             id: mr.id,
+                            target_project_id: mr.target_project_id,
                             job_type: job_type,
                             ssh_url: mr.ssh_url.clone(),
                             approval_status: mr.approval_status,
