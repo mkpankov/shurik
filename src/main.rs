@@ -728,6 +728,18 @@ fn handle_build_request(
             let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит {}\"}}", arg);
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
+            for p in project_set.projects.values() {
+                let workspace_dir = p.workspace_dir.to_str().unwrap();
+                git::set_remote_url(workspace_dir, &ssh_url);
+                git::set_user(workspace_dir, "Shurik", "shurik@example.com");
+                git::fetch(workspace_dir, key_path);
+                git::reset_hard(workspace_dir, None);
+
+                git::checkout(workspace_dir, "try");
+                git::reset_hard(workspace_dir, Some("origin/master"));
+                git::push(workspace_dir, key_path, true);
+            }
+
             git::set_remote_url(workspace_dir, &ssh_url);
             git::set_user(workspace_dir, "Shurik", "shurik@example.com");
             git::fetch(workspace_dir, key_path);
