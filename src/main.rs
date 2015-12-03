@@ -126,26 +126,6 @@ struct ProjectSet {
     projects: HashMap<i64, Project>,
 }
 
-#[derive(Debug)]
-struct LinkedSetRequest {
-    id: u64,
-    project_name: String,
-    mr_human_number: u64,
-    links: Vec<MrLinkHuman>,
-    source_comment_url: String,
-}
-
-#[derive(Debug)]
-struct MrLinkHuman {
-    project_name: String,
-    mr_human_number: u64,
-}
-
-struct LinkedSet {
-    id: u64,
-    mrs: Vec<MergeRequest>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MrUid {
     id: u64,
@@ -260,7 +240,6 @@ fn handle_mr(
     req: &mut Request,
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     project_set: &ProjectSet,
-    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
     state_save_dir: &str)
     -> IronResult<Response> {
     debug!("handle_mr started            : {}", time::precise_time_ns());
@@ -313,13 +292,6 @@ fn handle_mr(
         _ => MergeStatus::CanNotBeMerged,
     };
 
-    for linked_set_request in &*linked_set_requests.lock().unwrap() {
-        if target_project_name == linked_set_request.project_name
-            && mr_human_number == linked_set_request.mr_human_number
-        {
-            // TO DO
-        }
-    }
     let id = MrUid { target_project_id: target_project_id, id: mr_id };
     if let Status::Open(_) = new_status {
         ;
@@ -350,7 +322,6 @@ fn handle_comment(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     worker_queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     project_set: &ProjectSet,
-    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
     state_save_dir: &str)
     -> IronResult<Response> {
     debug!("handle_comment started       : {}", time::precise_time_ns());
@@ -445,28 +416,13 @@ fn handle_comment(
                         let args_span = (mention_len + command_name.len(), note.len());
                         let args_string = &note[args_span.0..args_span.1];
                         let args: Vec<_> = args_string.split(",").collect();
-                        let mut links = Vec::new();
                         for arg in args {
                             let components: Vec<_> = arg.split("/").collect();
                             let project_name = components[0];
-                            let mr_human_number = components[1].parse().unwrap();
-                            let mr_link_human = MrLinkHuman {
-                                project_name: project_name.to_owned(),
-                                mr_human_number: mr_human_number,
-                            };
-                            links.push(mr_link_human);
+                            let mr_human_number: u64 = components[1].parse().unwrap();
+                            // TODO: Push to linked set project links
                         }
-                        let mut linked_sets = linked_set_requests.lock().unwrap();
-                        let id = linked_sets.len() as u64;
-                        linked_sets.push(
-                            LinkedSetRequest {
-                                id: id,
-                                project_name: target_project_name.to_owned(),
-                                mr_human_number: mr_human_number,
-                                links: links,
-                                source_comment_url: comment_url.to_owned(),
-                            });
-                        println!("{:?}", linked_set_requests);
+                        // TODO: Push to linked sets storage
                     } else {
                         info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
                         return Ok(Response::with(status::Ok));
@@ -618,7 +574,6 @@ fn handle_build_request(
     queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     config: &toml::Value,
     project_set: &ProjectSet,
-    linked_set_requests: &Mutex<Vec<LinkedSetRequest>>,
     state_save_dir: &str) -> !
 {
     debug!("handle_build_request started : {}", time::precise_time_ns());
@@ -664,14 +619,6 @@ fn handle_build_request(
         let projects = &project_set.projects;
         let project = &projects[&(mr_id.target_project_id as i64)];
         let workspace_dir = &project.workspace_dir.to_str().unwrap();
-
-        for lsr in &*linked_set_requests.lock().unwrap() {
-            if project.name == lsr.project_name
-                && mr_human_number == lsr.mr_human_number
-            {
-                ;
-            }
-        }
 
         let mut do_update = false;
         {
@@ -1088,10 +1035,6 @@ fn main() {
         let config2 = config.clone();
         let config3 = config2.clone();
 
-        let linked_set_requests = Arc::new(Mutex::new(Vec::new()));
-        let lsr2 = linked_set_requests.clone();
-        let lsr3 = lsr2.clone();
-
         let state_save_dir =
             Arc::new(
                 config.lookup("general.state-save-dir").unwrap()
@@ -1101,17 +1044,17 @@ fn main() {
         let ssd3 = ssd2.clone();
 
         let builder = thread::spawn(move || {
-            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*lsr3, &*ssd3);
+            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*ssd3);
         });
         builders.push(builder);
         scan_state_and_schedule_jobs(&*mrs4, &*queue2);
 
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
-                    handle_mr(req, &*mr_storage, &*psa3, &*linked_set_requests, &*state_save_dir));
+                    handle_mr(req, &*mr_storage, &*psa3, &*state_save_dir));
         router.post(format!("/api/v1/{}/comment", psid),
                     move |req: &mut Request|
-                    handle_comment(req, &*mrs2, &*queue3, &*psa, &*lsr2, &*ssd2));
+                    handle_comment(req, &*mrs2, &*queue3, &*psa, &*ssd2));
     }
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
