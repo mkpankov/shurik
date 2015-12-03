@@ -16,6 +16,7 @@ extern crate toml;
 use clap::App;
 use hyper::Client;
 use iron::*;
+use regex::Regex;
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use rustc_serialize::json::{self};
 
@@ -90,6 +91,7 @@ struct MergeRequest {
     status: Status,
     approval_status: ApprovalStatus,
     merge_status: MergeStatus,
+    issue_number: Option<String>,
 }
 
 #[derive(Debug)]
@@ -100,6 +102,7 @@ struct WorkerTask {
     checkout_sha: String,
     job_type: JobType,
     approval_status: ApprovalStatus,
+    issue_number: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -176,6 +179,7 @@ struct MergeRequestBuilder {
     status: Option<Status>,
     approval_status: Option<ApprovalStatus>,
     merge_status: Option<MergeStatus>,
+    issue_number: Option<String>,
 }
 
 impl MergeRequestBuilder {
@@ -188,6 +192,7 @@ impl MergeRequestBuilder {
             status: None,
             approval_status: None,
             merge_status: None,
+            issue_number: None,
         }
     }
     fn with_checkout_sha(mut self, checkout_sha: &str) -> Self {
@@ -216,6 +221,7 @@ impl MergeRequestBuilder {
                 status: status,
                 approval_status: approval_status,
                 merge_status: merge_status,
+                issue_number: self.issue_number,
             })
         } else {
             Err(())
@@ -223,15 +229,16 @@ impl MergeRequestBuilder {
     }
 }
 
-fn update_or_create_mr(storage: &mut HashMap<MrUid, MergeRequest>,
-                       id: MrUid,
-                       ssh_url: &str,
-                       human_number: u64,
-                       old_statuses: &[Status],
-                       new_checkout_sha: Option<&str>,
-                       new_status: Option<Status>,
-                       new_approval_status: Option<ApprovalStatus>,
-                       new_merge_status: Option<MergeStatus>) {
+fn update_or_create_mr(
+    storage: &mut HashMap<MrUid, MergeRequest>,
+    id: MrUid,
+    ssh_url: &str,
+    human_number: u64,
+    old_statuses: &[Status],
+    new_checkout_sha: Option<&str>,
+    new_status: Option<Status>,
+    new_approval_status: Option<ApprovalStatus>,
+    new_merge_status: Option<MergeStatus>) {
     if let Some(mut existing_mr) = storage.get_mut(&id) {
         if old_statuses.iter().any(|x| *x == existing_mr.status)
             || old_statuses.len() == 0
@@ -344,6 +351,7 @@ fn handle_mr(
     let target_project_name = json.lookup("object_attributes.target.name").unwrap().as_string().unwrap();
     let mr_human_number = attrs.get("iid").unwrap().as_u64().unwrap();
     let mr_id = attrs.get("id").unwrap().as_u64().unwrap();
+
     let action = json.lookup("object_attributes.action").unwrap().as_string().unwrap();
     let ssh_url = json.lookup("object_attributes.target.ssh_url").unwrap().as_string().unwrap();
     let new_status = match action {
@@ -440,7 +448,13 @@ fn handle_comment(
     let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
     let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
     let ssh_url = json.lookup("merge_request.target.ssh_url").unwrap().as_string().unwrap();
-    // This is unused as we only handle comments that are issued by reviewer
+
+    let title = json.lookup("object_attributes.title").unwrap().as_string().unwrap();
+    let re = Regex::new(r"(?:^|\s+)#(\d+)\b").unwrap();
+    let mut issue_number = None;
+    if let Some(caps) = re.captures(title) {
+        issue_number = Some(caps.at(1).unwrap().to_owned());
+    }
 
     let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
     let note = attrs.get("note").unwrap().as_string().unwrap();
@@ -537,7 +551,11 @@ fn handle_comment(
             new_approval_status,
             None,
             );
-
+        {
+            let mr_storage = &mut *mr_storage.lock().unwrap();
+            let mut mr = mr_storage.get_mut(&id).unwrap();
+            mr.issue_number = issue_number;
+        }
 
         if needs_notification {
             let job_type = match new_approval_status {
@@ -551,6 +569,7 @@ fn handle_comment(
                 checkout_sha: last_commit_id,
                 job_type: job_type,
                 approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
+                issue_number: None,
             };
 
             let &(ref list, ref cvar) = worker_queue;
@@ -724,6 +743,12 @@ fn handle_build_request(
         }
         save_state(state_save_dir, &project_set.name, mr_storage);
 
+        let issue_number = request.issue_number;
+        if let None = issue_number {
+            let message = &*format!("{{ \"note\": \":no_entry_sign: в заголовке MR нет номера задачи. Отредактируйте его и сделайте r+\"}}");
+            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            continue;
+        }
         if do_update {
             let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит {}\"}}", arg);
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
@@ -749,7 +774,7 @@ fn handle_build_request(
             git::reset_hard(workspace_dir, Some("origin/master"));
             git::checkout(workspace_dir, "try");
             git::reset_hard(workspace_dir, Some(&arg));
-            match git::merge(workspace_dir, "master", mr_human_number, false) {
+            match git::merge(workspace_dir, "master", mr_human_number, issue_number.clone(), false) {
                 Ok(_) => {},
                 Err(_) => {
                     let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -876,7 +901,7 @@ fn handle_build_request(
                 let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                 git::checkout(workspace_dir, "master");
-                match git::merge(workspace_dir, "try", mr_human_number, true) {
+                match git::merge(workspace_dir, "try", mr_human_number, issue_number, true) {
                     Ok(_) => {},
                     Err(_) => {
                         let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -947,7 +972,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     git::checkout(workspace_dir, "try");
     git::fetch(workspace_dir, key_path);
     git::reset_hard(workspace_dir, Some(&arg));
-    match git::merge(workspace_dir, "master", mr_human_number, false) {
+    match git::merge(workspace_dir, "master", mr_human_number, None, false) {
         Ok(_) => {},
         Err(_) => {
             let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: {}\"}}", arg);
@@ -983,6 +1008,7 @@ fn scan_state_and_schedule_jobs(
                             approval_status: mr.approval_status,
                             checkout_sha: mr.checkout_sha.clone(),
                             human_number: mr.human_number,
+                            issue_number: mr.issue_number.clone(),
                         };
                         let &(ref list, ref cvar) = queue;
                         list.lock().unwrap().push_back(new_task);

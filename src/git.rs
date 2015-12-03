@@ -85,17 +85,32 @@ pub fn push(workspace_dir: &str, key_path: &str, do_force: bool) {
     }
 }
 
-pub fn merge(workspace_dir: &str, branch: &str, mr_human_number: u64, no_ff: bool) -> Result<(), String> {
+pub fn merge(
+    workspace_dir: &str,
+    branch: &str,
+    mr_human_number: u64,
+    maybe_issue_number: Option<String>,
+    no_ff: bool)
+    -> Result<(), String> {
     let mut command = Command::new("git");
     let mut builder = command
         .arg("merge").arg(branch)
         .current_dir(workspace_dir);
+    let action = if no_ff {
+        "merge"
+    } else {
+        "update"
+    };
+    let maybe_issue_number_string = if let Some(issue_number) = maybe_issue_number {
+        format!(" #{}", issue_number).to_owned()
+    } else {
+        "".to_owned()
+    };
+    let message_arg = &*format!("-m \"Automatic {} of MR !{}{}\"", action, mr_human_number, maybe_issue_number_string);
     if no_ff {
         builder.arg("--no-ff");
-        builder.arg(&*format!("-m \"Automatic merge of MR !{}\"", mr_human_number));
-    } else {
-        builder.arg(&*format!("-m \"Automatic update of MR !{}\"", mr_human_number));
     }
+    builder.arg(message_arg);
     let status = builder
         .status()
         .unwrap_or_else(|e| {
