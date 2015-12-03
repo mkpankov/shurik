@@ -92,9 +92,9 @@ pub fn merge(workspace_dir: &str, branch: &str, mr_human_number: u64, no_ff: boo
         .current_dir(workspace_dir);
     if no_ff {
         builder.arg("--no-ff");
-        builder.arg(&*format!("-m \"Merge MR !{}\"", mr_human_number));
+        builder.arg(&*format!("-m \"Automatic merge of MR !{}\"", mr_human_number));
     } else {
-        builder.arg(&*format!("-m \"Update MR !{}\"", mr_human_number));
+        builder.arg(&*format!("-m \"Automatic update of MR !{}\"", mr_human_number));
     }
     let status = builder
         .status()
