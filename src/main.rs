@@ -449,7 +449,7 @@ fn handle_comment(
     let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
     let ssh_url = json.lookup("merge_request.target.ssh_url").unwrap().as_string().unwrap();
 
-    let title = json.lookup("object_attributes.title").unwrap().as_string().unwrap();
+    let title = json.lookup("merge_request.title").unwrap().as_string().unwrap();
     let re = Regex::new(r"(?:^|\s+)#(\d+)\b").unwrap();
     let mut issue_number = None;
     if let Some(caps) = re.captures(title) {
