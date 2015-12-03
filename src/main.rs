@@ -449,7 +449,8 @@ fn handle_comment(
     let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
     let ssh_url = json.lookup("merge_request.target.ssh_url").unwrap().as_string().unwrap();
 
-    let title = json.lookup("object_attributes.title").unwrap().as_string().unwrap();
+    let title = json.lookup("merge_request.title").unwrap().as_string().unwrap();
+    info!("{}", title);
     let re = Regex::new(r"(?:^|\s+)#(\d+)\b").unwrap();
     let mut issue_number = None;
     if let Some(caps) = re.captures(title) {
@@ -554,7 +555,7 @@ fn handle_comment(
         {
             let mr_storage = &mut *mr_storage.lock().unwrap();
             let mut mr = mr_storage.get_mut(&id).unwrap();
-            mr.issue_number = issue_number;
+            mr.issue_number = issue_number.clone();
         }
 
         if needs_notification {
@@ -569,7 +570,7 @@ fn handle_comment(
                 checkout_sha: last_commit_id,
                 job_type: job_type,
                 approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
-                issue_number: None,
+                issue_number: issue_number,
             };
 
             let &(ref list, ref cvar) = worker_queue;
