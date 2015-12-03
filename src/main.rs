@@ -755,6 +755,7 @@ fn handle_build_request(
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
             for p in project_set.projects.values() {
+                info!("Resetting project {}", p.name);
                 let workspace_dir = p.workspace_dir.to_str().unwrap();
                 git::set_remote_url(workspace_dir, &ssh_url);
                 git::set_user(workspace_dir, "Shurik", "shurik@example.com");
