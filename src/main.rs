@@ -171,64 +171,6 @@ impl Decodable for MrUid {
     }
 }
 
-struct MergeRequestBuilder {
-    id: MrUid,
-    ssh_url: String,
-    human_number: u64,
-    checkout_sha: Option<String>,
-    status: Option<Status>,
-    approval_status: Option<ApprovalStatus>,
-    merge_status: Option<MergeStatus>,
-    issue_number: Option<String>,
-}
-
-impl MergeRequestBuilder {
-    fn new(id: MrUid, ssh_url: String, human_number: u64) -> Self {
-        MergeRequestBuilder {
-            id: id,
-            ssh_url: ssh_url,
-            human_number: human_number,
-            checkout_sha: None,
-            status: None,
-            approval_status: None,
-            merge_status: None,
-            issue_number: None,
-        }
-    }
-    fn with_checkout_sha(mut self, checkout_sha: &str) -> Self {
-        self.checkout_sha = Some(checkout_sha.to_owned());
-        self
-    }
-    fn with_status(mut self, status: Status) -> Self {
-        self.status = Some(status);
-        self
-    }
-    fn with_approval_status(mut self, approval_status: ApprovalStatus) -> Self {
-        self.approval_status = Some(approval_status);
-        self
-    }
-    fn with_merge_status(mut self, merge_status: MergeStatus) -> Self {
-        self.merge_status = Some(merge_status);
-        self
-    }
-    fn build(self) -> Result<MergeRequest, ()> {
-        if let (Some(checkout_sha), Some(status), Some(approval_status), Some(merge_status)) = (self.checkout_sha, self.status, self.approval_status, self.merge_status) {
-            Ok(MergeRequest {
-                id: self.id,
-                ssh_url: self.ssh_url,
-                human_number: self.human_number,
-                checkout_sha: checkout_sha,
-                status: status,
-                approval_status: approval_status,
-                merge_status: merge_status,
-                issue_number: self.issue_number,
-            })
-        } else {
-            Err(())
-        }
-    }
-}
-
 fn update_or_create_mr(
     storage: &mut HashMap<MrUid, MergeRequest>,
     id: MrUid,
@@ -260,13 +202,16 @@ fn update_or_create_mr(
         return;
     }
 
-    let incoming = MergeRequestBuilder::new(id, ssh_url.to_owned(), human_number)
-        .with_checkout_sha(new_checkout_sha.unwrap())
-        .with_status(new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)))
-        .with_approval_status(new_approval_status.unwrap_or(ApprovalStatus::Pending))
-        .with_merge_status(new_merge_status.unwrap_or(MergeStatus::CanBeMerged))
-        .build()
-        .unwrap();
+    let incoming = MergeRequest {
+        id: id,
+        ssh_url: ssh_url.to_owned(),
+        human_number: human_number,
+        checkout_sha: new_checkout_sha.unwrap().to_owned(),
+        status: new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)),
+        approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
+        merge_status: new_merge_status.unwrap_or(MergeStatus::CanBeMerged),
+        issue_number: None,
+    };
 
     storage.insert(id, incoming);
     info!("Added MR: {:?}", storage[&id]);
