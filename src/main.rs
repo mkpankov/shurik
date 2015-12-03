@@ -555,7 +555,7 @@ fn handle_comment(
         {
             let mr_storage = &mut *mr_storage.lock().unwrap();
             let mut mr = mr_storage.get_mut(&id).unwrap();
-            mr.issue_number = issue_number;
+            mr.issue_number = issue_number.clone();
         }
 
         if needs_notification {
@@ -570,7 +570,7 @@ fn handle_comment(
                 checkout_sha: last_commit_id,
                 job_type: job_type,
                 approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
-                issue_number: None,
+                issue_number: issue_number,
             };
 
             let &(ref list, ref cvar) = worker_queue;
