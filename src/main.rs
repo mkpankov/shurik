@@ -118,6 +118,7 @@ struct Project {
     workspace_dir: PathBuf,
     reviewers: Vec<String>,
     job_url: String,
+    ssh_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -649,7 +650,7 @@ fn handle_build_request(
             for p in project_set.projects.values() {
                 info!("Resetting project {}", p.name);
                 let workspace_dir = p.workspace_dir.to_str().unwrap();
-                git::set_remote_url(workspace_dir, &ssh_url);
+                git::set_remote_url(workspace_dir, &p.ssh_url);
                 git::set_user(workspace_dir, "Shurik", "shurik@example.com");
                 git::fetch(workspace_dir, key_path);
                 git::reset_hard(workspace_dir, None);
@@ -984,6 +985,7 @@ fn main() {
             let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
             let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
             let name = project_toml.lookup("name").unwrap().as_str().unwrap();
+            let ssh_url = project_toml.lookup("ssh-url").unwrap().as_str().unwrap();
 
             let p = Project {
                 id: key,
@@ -991,6 +993,7 @@ fn main() {
                 reviewers: string_vec,
                 job_url: job_url.to_owned(),
                 name: name.to_owned(),
+                ssh_url: ssh_url.to_owned()
             };
             projects.insert(key, p);
         }
