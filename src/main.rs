@@ -384,59 +384,59 @@ fn handle_comment(
 
     let mention = "@shurik ";
     let mention_len = mention.len();
-    if note.len() >= mention.len() {
-        if &note[0..mention_len] == mention {
-            match &note[mention_len..] {
-                "r+" | "одобряю" => {
-                    if is_comment_author_reviewer {
-                        old_statuses.push(Status::Open(SubStatusOpen::WaitingForReview));
-                        new_status = Some(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
-                        new_approval_status = Some(ApprovalStatus::Approved);
-                        needs_notification = true;
-                    } else {
-                        info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
-                        return Ok(Response::with(status::Ok));
-                    }
-                },
-                "r-" | "отказываю" => {
-                    if is_comment_author_reviewer {
-                        old_statuses.push(Status::Open(SubStatusOpen::WaitingForCi));
-                        old_statuses.push(Status::Open(SubStatusOpen::WaitingForMerge));
-                        old_statuses.push(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
-                        new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
-                        new_approval_status = Some(ApprovalStatus::Rejected);
-                    } else {
-                        info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
-                        return Ok(Response::with(status::Ok));
-                    }
-                    ;
-                },
-                command_name @ "link: " | command_name @ "связь: " => {
-                    if is_comment_author_reviewer {
-                        let args_span = (mention_len + command_name.len(), note.len());
-                        let args_string = &note[args_span.0..args_span.1];
-                        let args: Vec<_> = args_string.split(",").collect();
-                        for arg in args {
-                            let components: Vec<_> = arg.split("/").collect();
-                            let project_name = components[0];
-                            let mr_human_number: u64 = components[1].parse().unwrap();
-                            // TODO: Push to linked set project links
-                        }
-                        // TODO: Push to linked sets storage
-                    } else {
-                        info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
-                        return Ok(Response::with(status::Ok));
-                    }
-                    ;
-                },
-                "try" | "попробуй" => {
+    if note.starts_with(mention) {
+        // SAFE: If note starts with mention, this is safe:
+        // mention_len points to character boundary
+        match &note[mention_len..] {
+            "r+" | "одобряю" => {
+                if is_comment_author_reviewer {
+                    old_statuses.push(Status::Open(SubStatusOpen::WaitingForReview));
                     new_status = Some(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
+                    new_approval_status = Some(ApprovalStatus::Approved);
                     needs_notification = true;
-                },
-                _ => {
-                    warn!("Unknown command: {}", &note[mention_len..]);
+                } else {
+                    info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
                     return Ok(Response::with(status::Ok));
                 }
+            },
+            "r-" | "отказываю" => {
+                if is_comment_author_reviewer {
+                    old_statuses.push(Status::Open(SubStatusOpen::WaitingForCi));
+                    old_statuses.push(Status::Open(SubStatusOpen::WaitingForMerge));
+                    old_statuses.push(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
+                    new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
+                    new_approval_status = Some(ApprovalStatus::Rejected);
+                } else {
+                    info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
+                    return Ok(Response::with(status::Ok));
+                }
+                ;
+            },
+            command_name @ "link: " | command_name @ "связь: " => {
+                if is_comment_author_reviewer {
+                    let args_span = (mention_len + command_name.len(), note.len());
+                    let args_string = &note[args_span.0..args_span.1];
+                    let args: Vec<_> = args_string.split(",").collect();
+                    for arg in args {
+                        let components: Vec<_> = arg.split("/").collect();
+                        let project_name = components[0];
+                        let mr_human_number: u64 = components[1].parse().unwrap();
+                        // TODO: Push to linked set project links
+                    }
+                    // TODO: Push to linked sets storage
+                } else {
+                    info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
+                    return Ok(Response::with(status::Ok));
+                }
+                ;
+            },
+            "try" | "попробуй" => {
+                new_status = Some(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
+                needs_notification = true;
+            },
+            _ => {
+                warn!("Unknown command: {}", &note[mention_len..]);
+                return Ok(Response::with(status::Ok));
             }
         }
     }
