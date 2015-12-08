@@ -772,8 +772,8 @@ fn handle_build_request(
                 r.status =
                     Status::Open(SubStatusOpen::WaitingForResultDispatch(Some(build_url), Some(result_string)));
             }
-            save_state(state_save_dir, &project_set.name, mr_storage);
         }
+        save_state(state_save_dir, &project_set.name, mr_storage);
 
         {
             if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id) {
