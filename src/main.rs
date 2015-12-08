@@ -163,7 +163,14 @@ fn update_or_create_mr(
     new_approval_status: Option<ApprovalStatus>,
     new_merge_status: Option<MergeStatus>) {
     if let Some(mut existing_mr) = storage.get_mut(&id) {
-        if old_statuses.iter().any(|x| *x == existing_mr.status)
+        let is_waiting_for_result_dispatch_acceptable = |s| {
+            if let &Status::Open(SubStatusOpen::WaitingForResultDispatch(_, _)) = s {
+                true
+            } else {
+                false
+            }
+        };
+        if old_statuses.iter().any(|x| *x == existing_mr.status || is_waiting_for_result_dispatch_acceptable(x))
             || old_statuses.len() == 0
         {
             if let Some(new_status) = new_status {
