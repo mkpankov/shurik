@@ -152,6 +152,11 @@ impl Decodable for MrUid {
     }
 }
 
+struct HumanIdStorage {
+    resolver_queue: LinkedList<String>,
+    id_map: HashMap<String, MrUid>,
+}
+
 fn update_or_create_mr(
     storage: &mut HashMap<MrUid, MergeRequest>,
     id: MrUid,
@@ -947,6 +952,10 @@ fn scan_state_and_schedule_jobs(
     }
 }
 
+fn resolve_ids(his: &Mutex<HumanIdStorage>) {
+    ;
+}
+
 fn main() {
     env_logger::init().unwrap();
 
@@ -1037,6 +1046,7 @@ fn main() {
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
+    let mut resolvers = Vec::new();
     let state_save_dir = config.lookup("general.state-save-dir").unwrap().as_str().unwrap();
 
     for (psid, project_set) in project_sets.into_iter() {
@@ -1080,6 +1090,15 @@ fn main() {
         });
         builders.push(builder);
         scan_state_and_schedule_jobs(&*mrs4, &*queue2);
+
+        let human_id_storage = Arc::new(Mutex::new(HumanIdStorage {
+            resolver_queue: LinkedList::new(),
+            id_map: HashMap::new(),
+        }));
+        let resolver = thread::spawn(move || {
+            resolve_ids(&*human_id_storage);
+        });
+        resolvers.push(resolver);
 
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
