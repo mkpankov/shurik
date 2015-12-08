@@ -55,7 +55,7 @@ enum SubStatusOpen {
     Updating(SubStatusUpdating),
     WaitingForCi,
     Building(SubStatusBuilding),
-    WaitingForMerge,
+    WaitingForResultDispatch(Option<String>, Option<String>),
 }
 
 #[derive(RustcDecodable, RustcEncodable)]
@@ -403,7 +403,7 @@ fn handle_comment(
             "r-" | "отказываю" => {
                 if is_comment_author_reviewer {
                     old_statuses.push(Status::Open(SubStatusOpen::WaitingForCi));
-                    old_statuses.push(Status::Open(SubStatusOpen::WaitingForMerge));
+                    old_statuses.push(Status::Open(SubStatusOpen::WaitingForResultDispatch(None, None)));
                     old_statuses.push(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
                     new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
                     new_approval_status = Some(ApprovalStatus::Rejected);
@@ -741,103 +741,118 @@ fn handle_build_request(
         } else {
             let mrs = mr_storage.lock().unwrap();
             let r = mrs.get(&mr_id).unwrap();
-            let ref status = r.status;
-            match *status {
+            match r.status {
                 Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(ref bu, ref rs))) => {
                     build_url = bu.clone();
                     result_string = rs.clone();
-                }
-                _ => panic!("Expected finished build, but status is {:?}", status),
+                },
+                Status::Open(SubStatusOpen::WaitingForResultDispatch(ref bu, ref rs)) => {
+                    info!("MR is already waiting for result dispatch");
+                    if let Some(ref bu) = *bu {
+                        build_url = bu.clone();
+                    } else {
+                        panic!("Expected status to have build url, but it's {:?}'", bu);
+                    }
+                    if let Some(ref rs) = *rs {
+                        result_string = rs.clone();
+                    } else {
+                        panic!("Expected status to have result string, but it's {:?}'", rs);
+                    }
+                },
+                _ => panic!("Expected finished build or waiting for result dispatch, but status is {:?}", r.status),
             }
         }
 
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            if let Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(_, _))) = r.status {
+            let current_status = r.status.clone();
+            if let Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(build_url, result_string))) = current_status
+            {
                 r.status =
-                    Status::Open(SubStatusOpen::WaitingForMerge);
+                    Status::Open(SubStatusOpen::WaitingForResultDispatch(Some(build_url), Some(result_string)));
             }
-
+            save_state(state_save_dir, &project_set.name, mr_storage);
         }
-        save_state(state_save_dir, &project_set.name, mr_storage);
 
-        if result_string == "SUCCESS" {
-            if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id) {
-                if new_request.checkout_sha == request.checkout_sha {
-                    if request.approval_status != new_request.approval_status
-                        && new_request.approval_status != ApprovalStatus::Approved
-                    {
-                        info!("The MR was rejected in the meantime, not merging");
-                        let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, коммит запретили. Не сливаю\"}}");
-                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-                        continue;
-                    } else {
-                        info!("MR has new comments, and head is same commit, so it doesn't make sense to account for changes");
-                    }
-                } else {
-                    info!("MR head is different commit, not merging");
-                    let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR обновился. Не сливаю\"}}");
+        if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id) {
+            if new_request.checkout_sha == request.checkout_sha {
+                if request.approval_status != new_request.approval_status
+                    && new_request.approval_status != ApprovalStatus::Approved
+                {
+                    info!("The MR was rejected in the meantime, not merging");
+                    let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR запретили. Не сливаю\"}}");
                     gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                     continue;
                 }
-            }
-            let mut do_merge = false;
-            {
-                let mut mr_storage_locked = mr_storage.lock().unwrap();
-                let request = mr_storage_locked.get_mut(&mr_id).unwrap();
-                assert_eq!(request.status, Status::Open(SubStatusOpen::WaitingForMerge));
-                if request.approval_status == ApprovalStatus::Approved {
-                    do_merge = true;
-                }
-            }
-            if do_merge {
-                info!("Merging");
-                let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
+            } else {
+                info!("MR head is different commit, not merging");
+                let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR обновился. Не сливаю\"}}");
                 gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-                git::checkout(workspace_dir, "master");
-                match git::merge(workspace_dir, "try", mr_human_number, issue_number, true) {
-                    Ok(_) => {},
-                    Err(_) => {
-                        let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
-                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-                        continue;
-                    },
-                }
-                git::status(workspace_dir);
-                git::push(workspace_dir, key_path, false);
-                {
-                    let mut mr_storage_locked = mr_storage.lock().unwrap();
-                    // MR was merged, removing
-                    mr_storage_locked.remove(&mr_id);
-                }
-                save_state(state_save_dir, &project_set.name, mr_storage);
-                info!("Updated existing MR");
-                let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
-                gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
-
-                for mr in mr_storage.lock().unwrap().values() {
-                    info!("MR to try merge: {:?}", mr);
-                    git::set_remote_url(workspace_dir, &ssh_url);
-                    git::set_user(workspace_dir, "Shurik", "shurik@example.com");
-                    mr_try_merge_and_report_if_impossible(mr, gitlab_api_root, private_token, workspace_dir, key_path);
-                }
                 continue;
             }
+        } else {
+            info!("MR was closed or merged in the meantime, skipping");
+            continue;
         }
+        let mut do_merge = false;
+        {
+            let mut mr_storage_locked = mr_storage.lock().unwrap();
+            let request = mr_storage_locked.get_mut(&mr_id).unwrap();
+            match request.status {
+                Status::Open(SubStatusOpen::WaitingForResultDispatch(_, _)) => {},
+                ref r => panic!("Expected status to be waiting for result dispatch, but got {:?}", r),
+            }
+            if request.approval_status == ApprovalStatus::Approved {
+                do_merge = true;
+            }
+        }
+        if do_merge {
+            info!("Merging");
+            let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
+            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            git::checkout(workspace_dir, "master");
+            match git::merge(workspace_dir, "try", mr_human_number, issue_number, true) {
+                Ok(_) => {},
+                Err(_) => {
+                    let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
+                    gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                    continue;
+                },
+            }
+            git::status(workspace_dir);
+            git::push(workspace_dir, key_path, false);
+            {
+                let mut mr_storage_locked = mr_storage.lock().unwrap();
+                // MR was merged, removing
+                mr_storage_locked.remove(&mr_id);
+            }
+            save_state(state_save_dir, &project_set.name, mr_storage);
+            info!("Updated existing MR");
+            let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
+            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
 
-        let build_result_message = match &*result_string {
-            "SUCCESS" => "успешно",
-            _ => "с ошибками",
-        };
-        let indicator = match &*result_string {
-            "SUCCESS" => ":sunny:",
-            _ => ":bangbang:",
-        };
+            for mr in mr_storage.lock().unwrap().values() {
+                info!("MR to try merge: {:?}", mr);
+                git::set_remote_url(workspace_dir, &ssh_url);
+                git::set_user(workspace_dir, "Shurik", "shurik@example.com");
+                mr_try_merge_and_report_if_impossible(mr, gitlab_api_root, private_token, workspace_dir, key_path);
+            }
+            continue;
+        } else {
+            let build_result_message = match &*result_string {
+                "SUCCESS" => "успешно",
+                _ => "с ошибками",
+            };
+            let indicator = match &*result_string {
+                "SUCCESS" => ":sunny:",
+                _ => ":bangbang:",
+            };
 
-        let message = &*format!("{{ \"note\": \"{} тестирование завершено [{}]({})\"}}", indicator, build_result_message, build_url);
+            let message = &*format!("{{ \"note\": \"{} тестирование завершено [{}]({})\"}}", indicator, build_result_message, build_url);
 
-        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+        }
 
         debug!("handle_build_request finished: {}", time::precise_time_ns());
     }
