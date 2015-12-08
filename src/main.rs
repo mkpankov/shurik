@@ -775,25 +775,27 @@ fn handle_build_request(
             save_state(state_save_dir, &project_set.name, mr_storage);
         }
 
-        if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id) {
-            if new_request.checkout_sha == request.checkout_sha {
-                if request.approval_status != new_request.approval_status
-                    && new_request.approval_status != ApprovalStatus::Approved
-                {
-                    info!("The MR was rejected in the meantime, not merging");
-                    let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR запретили. Не сливаю\"}}");
+        {
+            if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id) {
+                if new_request.checkout_sha == request.checkout_sha {
+                    if request.approval_status != new_request.approval_status
+                        && new_request.approval_status != ApprovalStatus::Approved
+                    {
+                        info!("The MR was rejected in the meantime, not merging");
+                        let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR запретили. Не сливаю\"}}");
+                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                        continue;
+                    }
+                } else {
+                    info!("MR head is different commit, not merging");
+                    let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR обновился. Не сливаю\"}}");
                     gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
                     continue;
                 }
             } else {
-                info!("MR head is different commit, not merging");
-                let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR обновился. Не сливаю\"}}");
-                gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                info!("MR was closed or merged in the meantime, skipping");
                 continue;
             }
-        } else {
-            info!("MR was closed or merged in the meantime, skipping");
-            continue;
         }
         let mut do_merge = false;
         {
