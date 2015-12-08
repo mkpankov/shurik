@@ -908,7 +908,7 @@ fn scan_state_and_schedule_jobs(
                 use SubStatusOpen::*;
 
                 match *substatus_open {
-                    Updating(_) | WaitingForCi | Building(_) => {
+                    Updating(_) | WaitingForCi | Building(_) | WaitingForResultDispatch(_, _) => {
                         let job_type = match mr.approval_status {
                             ApprovalStatus::Approved => JobType::Merge,
                             _ => JobType::Try,
