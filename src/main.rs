@@ -815,7 +815,7 @@ fn handle_build_request(
             let request = mr_storage_locked.get_mut(&mr_id).unwrap();
             let result_string;
             match request.status {
-                Status::Open(SubStatusOpen::WaitingForResultDispatch(Some(ref rs), _)) => {
+                Status::Open(SubStatusOpen::WaitingForResultDispatch(_, Some(ref rs))) => {
                     result_string = rs;
                 },
                 ref r => panic!("Expected status to be waiting for result dispatch, but got {:?}", r),
