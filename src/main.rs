@@ -871,6 +871,17 @@ fn handle_build_request(
             let message = &*format!("{{ \"note\": \"{} тестирование завершено [{}]({})\"}}", indicator, build_result_message, build_url);
 
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            {
+                let mut mrs = mr_storage.lock().unwrap();
+                let mut r = mrs.get_mut(&mr_id).unwrap();
+                if let Status::Open(SubStatusOpen::WaitingForResultDispatch(_, _)) = r.status
+                {
+                    r.status =
+                        Status::Open(SubStatusOpen::WaitingForReview);
+                }
+            }
+            save_state(state_save_dir, &project_set.name, mr_storage);
+
         }
 
         debug!("handle_build_request finished: {}", time::precise_time_ns());
