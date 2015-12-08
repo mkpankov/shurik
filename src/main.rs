@@ -152,6 +152,11 @@ impl Decodable for MrUid {
     }
 }
 
+struct HumanIdStorage {
+    resolver_queue: LinkedList<String>,
+    id_map: HashMap<String, MrUid>,
+}
+
 fn update_or_create_mr(
     storage: &mut HashMap<MrUid, MergeRequest>,
     id: MrUid,
@@ -163,7 +168,14 @@ fn update_or_create_mr(
     new_approval_status: Option<ApprovalStatus>,
     new_merge_status: Option<MergeStatus>) {
     if let Some(mut existing_mr) = storage.get_mut(&id) {
-        if old_statuses.iter().any(|x| *x == existing_mr.status)
+        let is_waiting_for_result_dispatch_acceptable = |s| {
+            if let &Status::Open(SubStatusOpen::WaitingForResultDispatch(_, _)) = s {
+                true
+            } else {
+                false
+            }
+        };
+        if old_statuses.iter().any(|x| *x == existing_mr.status || is_waiting_for_result_dispatch_acceptable(x))
             || old_statuses.len() == 0
         {
             if let Some(new_status) = new_status {
@@ -803,11 +815,12 @@ fn handle_build_request(
             let request = mr_storage_locked.get_mut(&mr_id).unwrap();
             let result_string;
             match request.status {
-                Status::Open(SubStatusOpen::WaitingForResultDispatch(Some(ref rs), _)) => {
+                Status::Open(SubStatusOpen::WaitingForResultDispatch(_, Some(ref rs))) => {
                     result_string = rs;
                 },
                 ref r => panic!("Expected status to be waiting for result dispatch, but got {:?}", r),
             }
+            info!("Result: {}, approval status: {:?}", result_string, request.approval_status);
             if request.approval_status == ApprovalStatus::Approved
                 && result_string == "SUCCESS"
             {
@@ -859,6 +872,17 @@ fn handle_build_request(
             let message = &*format!("{{ \"note\": \"{} тестирование завершено [{}]({})\"}}", indicator, build_result_message, build_url);
 
             gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            {
+                let mut mrs = mr_storage.lock().unwrap();
+                let mut r = mrs.get_mut(&mr_id).unwrap();
+                if let Status::Open(SubStatusOpen::WaitingForResultDispatch(_, _)) = r.status
+                {
+                    r.status =
+                        Status::Open(SubStatusOpen::WaitingForReview);
+                }
+            }
+            save_state(state_save_dir, &project_set.name, mr_storage);
+
         }
 
         debug!("handle_build_request finished: {}", time::precise_time_ns());
@@ -938,6 +962,10 @@ fn scan_state_and_schedule_jobs(
             _ => {},
         }
     }
+}
+
+fn resolve_ids(his: &Mutex<HumanIdStorage>) {
+    ;
 }
 
 fn main() {
@@ -1030,6 +1058,7 @@ fn main() {
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
+    let mut resolvers = Vec::new();
     let state_save_dir = config.lookup("general.state-save-dir").unwrap().as_str().unwrap();
 
     for (psid, project_set) in project_sets.into_iter() {
@@ -1073,6 +1102,15 @@ fn main() {
         });
         builders.push(builder);
         scan_state_and_schedule_jobs(&*mrs4, &*queue2);
+
+        let human_id_storage = Arc::new(Mutex::new(HumanIdStorage {
+            resolver_queue: LinkedList::new(),
+            id_map: HashMap::new(),
+        }));
+        let resolver = thread::spawn(move || {
+            resolve_ids(&*human_id_storage);
+        });
+        resolvers.push(resolver);
 
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
