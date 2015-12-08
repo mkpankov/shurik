@@ -746,8 +746,11 @@ fn handle_build_request(
                 Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(ref bu, ref rs))) => {
                     build_url = bu.clone();
                     result_string = rs.clone();
-                }
-                _ => panic!("Expected finished build, but status is {:?}", status),
+                },
+                Status::Open(SubStatusOpen::WaitingForMerge) => {
+                    info!("MR is already waiting for merge");
+                },
+                _ => panic!("Expected finished build or waiting for merge, but status is {:?}", status),
             }
         }
 
