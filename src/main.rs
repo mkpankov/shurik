@@ -801,11 +801,16 @@ fn handle_build_request(
         {
             let mut mr_storage_locked = mr_storage.lock().unwrap();
             let request = mr_storage_locked.get_mut(&mr_id).unwrap();
+            let result_string;
             match request.status {
-                Status::Open(SubStatusOpen::WaitingForResultDispatch(_, _)) => {},
+                Status::Open(SubStatusOpen::WaitingForResultDispatch(Some(ref rs), _)) => {
+                    result_string = rs;
+                },
                 ref r => panic!("Expected status to be waiting for result dispatch, but got {:?}", r),
             }
-            if request.approval_status == ApprovalStatus::Approved {
+            if request.approval_status == ApprovalStatus::Approved
+                && result_string == "SUCCESS"
+            {
                 do_merge = true;
             }
         }
