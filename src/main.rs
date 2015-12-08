@@ -820,6 +820,7 @@ fn handle_build_request(
                 },
                 ref r => panic!("Expected status to be waiting for result dispatch, but got {:?}", r),
             }
+            info!("Result: {}", result_string);
             if request.approval_status == ApprovalStatus::Approved
                 && result_string == "SUCCESS"
             {
