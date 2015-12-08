@@ -772,8 +772,8 @@ fn handle_build_request(
                 r.status =
                     Status::Open(SubStatusOpen::WaitingForResultDispatch(Some(build_url), Some(result_string)));
             }
-            save_state(state_save_dir, &project_set.name, mr_storage);
         }
+        save_state(state_save_dir, &project_set.name, mr_storage);
 
         {
             if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id) {
@@ -908,7 +908,7 @@ fn scan_state_and_schedule_jobs(
                 use SubStatusOpen::*;
 
                 match *substatus_open {
-                    Updating(_) | WaitingForCi | Building(_) => {
+                    Updating(_) | WaitingForCi | Building(_) | WaitingForResultDispatch(_, _) => {
                         let job_type = match mr.approval_status {
                             ApprovalStatus::Approved => JobType::Merge,
                             _ => JobType::Try,
