@@ -5,7 +5,7 @@ set -u
 t=$(cat logname || mktemp)
 
 echo -n Going to wait for '$HOME/shurik_new\b' being closed...
-while lsof | egrep -q "$HOME/shurik_new\b"; do
+while /usr/sbin/lsof | egrep -q "$HOME/shurik_new\b"; do
     echo -n ' '
     sleep 1;
     echo -n .
