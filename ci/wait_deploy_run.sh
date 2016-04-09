@@ -34,5 +34,8 @@ export RUST_BACKTRACE
 RUST_LOG=info
 export RUST_LOG
 
+LD_LIBRARY_PATH="$PWD:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH
+
 ./shurik
 echo This point is reached after process is terminated
