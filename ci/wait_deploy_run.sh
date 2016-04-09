@@ -2,7 +2,7 @@
 set -e
 set -u
 
-t=$(cat logname || tempfile)
+t=$(cat logname || mktemp)
 
 echo -n Going to wait for '$HOME/shurik_new\b' being closed...
 while lsof | egrep -q "$HOME/shurik_new\b"; do
