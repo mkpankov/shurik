@@ -171,7 +171,7 @@ pub fn set_user(workspace_dir: &str, name: &str, email: &str) {
     }
     let status = Command::new("git")
         .arg("config").arg("user.email").arg(email)
-        .current_dir("workspace/shurik")
+        .current_dir(workspace_dir)
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to execute process: {}", e)
