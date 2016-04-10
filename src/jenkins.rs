@@ -9,6 +9,7 @@ pub fn enqueue_build(workspace_dir: &str, user: &str, password: &str, job_url: &
     let output = Command::new("wget")
         .arg("-S").arg("-O-")
         .arg("--no-check-certificate").arg("--auth-no-challenge")
+        .arg("--method=POST")
         .arg(format!("--http-user={}", user))
         .arg(format!("--http-password={}", password))
         .arg(format!("{}/?cause=I+want+to+be+built&RUN_TYPE={}", job_url, run_type))
