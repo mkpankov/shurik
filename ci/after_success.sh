@@ -13,8 +13,9 @@ if [ "$RUN_TYPE" = "deploy" ]; then
 
     scp ./ci/wait_deploy_run.sh "$HOST:"
     scp ./target/debug/shurik "$HOST:shurik_new"
-    ssh "$HOST" 'ssh-keyscan gitlab.host > ~/.ssh/known_hosts'
+    scp /usr/lib/x86_64-linux-gnu/libssl.so.1.0.0 "$HOST:"
+    scp /usr/lib/x86_64-linux-gnu/libcrypto.so.1.0.0 "$HOST:"
 
-    ssh "$HOST" 'sh -c "tempfile > logname"'
+    ssh "$HOST" 'sh -c "mktemp > logname"'
     ssh "$HOST" 'sh -c "nohup \"./wait_deploy_run.sh\" > $(cat logname) 2>&1 < /dev/null &"'
 fi;

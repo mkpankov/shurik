@@ -2,10 +2,10 @@
 set -e
 set -u
 
-t=$(cat logname || tempfile)
+t=$(cat logname || mktemp)
 
 echo -n Going to wait for '$HOME/shurik_new\b' being closed...
-while lsof | egrep -q "$HOME/shurik_new\b"; do
+while /usr/sbin/lsof | egrep -q "$HOME/shurik_new\b"; do
     echo -n ' '
     sleep 1;
     echo -n .
@@ -33,6 +33,9 @@ export RUST_BACKTRACE
 
 RUST_LOG=info
 export RUST_LOG
+
+LD_LIBRARY_PATH="$PWD"
+export LD_LIBRARY_PATH
 
 ./shurik
 echo This point is reached after process is terminated
