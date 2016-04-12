@@ -17,7 +17,6 @@ extern crate toml;
 extern crate url;
 
 use clap::App;
-use hyper::Client;
 use iron::*;
 use regex::Regex;
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
@@ -155,11 +154,6 @@ impl Decodable for MrUid {
     }
 }
 
-struct HumanIdStorage {
-    resolver_queue: LinkedList<String>,
-    id_map: HashMap<String, MrUid>,
-}
-
 fn update_or_create_mr(
     storage: &mut HashMap<MrUid, MergeRequest>,
     id: MrUid,
@@ -288,7 +282,6 @@ fn handle_mr(
     let last_commit = attrs.get("last_commit").unwrap().as_object().unwrap();
     let checkout_sha = last_commit.get("id").unwrap().as_string().unwrap();
     let target_project_id = attrs.get("target_project_id").unwrap().as_u64().unwrap();
-    let target_project_name = json.lookup("object_attributes.target.name").unwrap().as_string().unwrap();
     let mr_human_number = attrs.get("iid").unwrap().as_u64().unwrap();
     let mr_id = attrs.get("id").unwrap().as_u64().unwrap();
 
@@ -376,7 +369,6 @@ fn handle_comment(
 
     let last_commit_id = json.lookup("merge_request.last_commit.id").unwrap().as_string().unwrap().to_owned();
     let target_project_id = json.lookup("merge_request.target_project_id").unwrap().as_u64().unwrap();
-    let target_project_name = json.lookup("merge_request.target.name").unwrap().as_string().unwrap();
     let mr_human_number = json.lookup("merge_request.iid").unwrap().as_u64().unwrap();
     let mr_id = json.lookup("merge_request.id").unwrap().as_u64().unwrap();
     let ssh_url = json.lookup("merge_request.target.ssh_url").unwrap().as_string().unwrap();
@@ -391,7 +383,6 @@ fn handle_comment(
 
     let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
     let note = attrs.get("note").unwrap().as_string().unwrap();
-    let comment_url = json.lookup("object_attributes.url").unwrap().as_string().unwrap();
 
     let mut old_statuses = Vec::new();
     let mut new_status = None;
@@ -422,24 +413,6 @@ fn handle_comment(
                     old_statuses.push(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
                     new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
                     new_approval_status = Some(ApprovalStatus::Rejected);
-                } else {
-                    info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
-                    return Ok(Response::with(status::Ok));
-                }
-                ;
-            },
-            command_name @ "link: " | command_name @ "связь: " => {
-                if is_comment_author_reviewer {
-                    let args_span = (mention_len + command_name.len(), note.len());
-                    let args_string = &note[args_span.0..args_span.1];
-                    let args: Vec<_> = args_string.split(",").collect();
-                    for arg in args {
-                        let components: Vec<_> = arg.split("/").collect();
-                        let project_name = components[0];
-                        let mr_human_number: u64 = components[1].parse().unwrap();
-                        // TODO: Push to linked set project links
-                    }
-                    // TODO: Push to linked sets storage
                 } else {
                     info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
                     return Ok(Response::with(status::Ok));
@@ -942,10 +915,6 @@ fn scan_state_and_schedule_jobs(
     }
 }
 
-fn resolve_ids(his: &Mutex<HumanIdStorage>) {
-    ;
-}
-
 fn main() {
     env_logger::init().unwrap();
 
@@ -1030,9 +999,8 @@ fn main() {
     let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
     let gitlab_password = config.lookup("gitlab.password").unwrap().as_str().unwrap();
     let gitlab_api_root = config.lookup("gitlab.url").unwrap().as_str().unwrap();
-    let key_path = config.lookup("gitlab.ssh-key-path").unwrap().as_str().unwrap();
 
-    let gitlab_api = gitlab::Api::new(gitlab_api_root, key_path).unwrap();
+    let gitlab_api = gitlab::Api::new(gitlab_api_root).unwrap();
     let gitlab_session = gitlab_api.login(gitlab_user, gitlab_password).unwrap();
     let gitlab_session = Arc::new(gitlab_session);
 

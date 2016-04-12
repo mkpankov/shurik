@@ -1,5 +1,4 @@
 use ::std::io::Read;
-use ::std::path::PathBuf;
 
 use ::hyper::Client;
 use ::hyper::client::IntoUrl;
@@ -12,7 +11,6 @@ use ::MrUid;
 
 pub struct Api {
     root: Url,
-    key_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -46,14 +44,11 @@ quick_error! {
 }
 
 impl Api {
-    pub fn new<T: IntoUrl>(maybe_url: T, key_path: &str) -> Result<Self, ::url::ParseError> {
+    pub fn new<T: IntoUrl>(maybe_url: T) -> Result<Self, ::url::ParseError> {
         let url = try!(maybe_url.into_url());
-        let mut path = PathBuf::new();
-        path.push(key_path);
         Ok(
             Api {
                 root: url,
-                key_path: path,
             })
     }
 
@@ -78,7 +73,6 @@ impl Api {
         Ok(
             Session {
                 root: self.root.clone(),
-                key_path: self.key_path.clone(),
                 private_token: private_token.to_owned(),
             })
     }
@@ -86,7 +80,6 @@ impl Api {
 
 pub struct Session {
     root: Url,
-    key_path: PathBuf,
     private_token: String,
 }
 
