@@ -79,7 +79,7 @@ impl Api {
             Session {
                 root: self.root.clone(),
                 key_path: self.key_path.clone(),
-                private_token: "".to_owned(),
+                private_token: private_token.to_owned(),
             })
     }
 }
@@ -102,11 +102,14 @@ impl Session {
         headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Json, vec![])));
         headers.set_raw("PRIVATE-TOKEN", vec![private_token.to_owned().into_bytes()]);
 
-        debug!("headers == {:?}", headers);
         let MrUid { target_project_id, id } = mr_id;
 
         info!("Posting comment: {}", message);
-        let res = client.post(&*format!("{}/projects/{}/merge_request/{}/comments", api_root, target_project_id, id))
+        let url = &*format!("{}/projects/{}/merge_request/{}/comments", api_root, target_project_id, id);
+        debug!("url == {:?}", url);
+        debug!("headers == {:?}", headers);
+        debug!("body == {:?}", message);
+        let res = client.post(url)
             .headers(headers)
             .body(message)
             .send()
