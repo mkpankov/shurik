@@ -590,16 +590,11 @@ fn handle_build_request(
     queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
     config: &toml::Value,
     project_set: &ProjectSet,
-    state_save_dir: &str) -> !
+    state_save_dir: &str,
+    gitlab_session: &gitlab::Session) -> !
 {
     debug!("handle_build_request started : {}", time::precise_time_ns());
-    let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
-    let gitlab_password = config.lookup("gitlab.password").unwrap().as_str().unwrap();
-    let gitlab_api_root = config.lookup("gitlab.url").unwrap().as_str().unwrap();
     let key_path = config.lookup("gitlab.ssh-key-path").unwrap().as_str().unwrap();
-
-    let gitlab_api = gitlab::Api::new(gitlab_api_root, key_path).unwrap();
-    let gitlab_session = gitlab_api.login(gitlab_user, gitlab_password).unwrap();
 
     loop {
         debug!("handle_build_request iterated: {}", time::precise_time_ns());
@@ -1050,8 +1045,18 @@ fn main() {
     let mut resolvers = Vec::new();
     let state_save_dir = config.lookup("general.state-save-dir").unwrap().as_str().unwrap();
 
+    let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
+    let gitlab_password = config.lookup("gitlab.password").unwrap().as_str().unwrap();
+    let gitlab_api_root = config.lookup("gitlab.url").unwrap().as_str().unwrap();
+    let key_path = config.lookup("gitlab.ssh-key-path").unwrap().as_str().unwrap();
+
+    let gitlab_api = gitlab::Api::new(gitlab_api_root, key_path).unwrap();
+    let gitlab_session = gitlab_api.login(gitlab_user, gitlab_password).unwrap();
+    let gitlab_session = Arc::new(gitlab_session);
+
     for (psid, project_set) in project_sets.into_iter() {
         let mut reverse_project_map = HashMap::new();
+        let gitlab_session = gitlab_session.clone();
 
         debug!("Handling ProjectSet: {} = {:?}", psid, project_set);
 
@@ -1087,7 +1092,7 @@ fn main() {
         let ssd3 = ssd2.clone();
 
         let builder = thread::spawn(move || {
-            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*ssd3);
+            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*ssd3, &gitlab_session);
         });
         builders.push(builder);
         scan_state_and_schedule_jobs(&*mrs4, &*queue2);
