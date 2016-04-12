@@ -1036,7 +1036,6 @@ fn main() {
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
-    let mut resolvers = Vec::new();
     let state_save_dir = config.lookup("general.state-save-dir").unwrap().as_str().unwrap();
 
     let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
@@ -1090,15 +1089,6 @@ fn main() {
         });
         builders.push(builder);
         scan_state_and_schedule_jobs(&*mrs4, &*queue2);
-
-        let human_id_storage = Arc::new(Mutex::new(HumanIdStorage {
-            resolver_queue: LinkedList::new(),
-            id_map: HashMap::new(),
-        }));
-        let resolver = thread::spawn(move || {
-            resolve_ids(&*human_id_storage);
-        });
-        resolvers.push(resolver);
 
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
