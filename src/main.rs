@@ -634,12 +634,6 @@ fn handle_build_request(
         }
         save_state(state_save_dir, &project_set.name, mr_storage);
 
-        let issue_number = request.issue_number;
-        if let None = issue_number {
-            let message = &*format!("{{ \"note\": \":no_entry_sign: в заголовке MR нет номера задачи. Отредактируйте его и сделайте r+\"}}");
-            gitlab_session.post_comment(mr_id, message);
-            continue;
-        }
         if do_update {
             let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит {}\"}}", arg);
             gitlab_session.post_comment(mr_id, message);
@@ -666,7 +660,7 @@ fn handle_build_request(
             git::reset_hard(workspace_dir, Some("origin/master"));
             git::checkout(workspace_dir, "try");
             git::reset_hard(workspace_dir, Some(&arg));
-            match git::merge(workspace_dir, "master", mr_human_number, issue_number.clone(), false) {
+            match git::merge(workspace_dir, "master", mr_human_number, false) {
                 Ok(_) => {},
                 Err(_) => {
                     let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -817,7 +811,7 @@ fn handle_build_request(
             let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
             gitlab_session.post_comment(mr_id, message);
             git::checkout(workspace_dir, "master");
-            match git::merge(workspace_dir, "try", mr_human_number, issue_number, true) {
+            match git::merge(workspace_dir, "try", mr_human_number, true) {
                 Ok(_) => {},
                 Err(_) => {
                     let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
@@ -897,7 +891,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     git::checkout(workspace_dir, "try");
     git::fetch(workspace_dir, key_path);
     git::reset_hard(workspace_dir, Some(&arg));
-    match git::merge(workspace_dir, "master", mr_human_number, None, false) {
+    match git::merge(workspace_dir, "master", mr_human_number, false) {
         Ok(_) => {},
         Err(_) => {
             let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: {}\"}}", arg);

@@ -89,7 +89,6 @@ pub fn merge(
     workspace_dir: &str,
     branch: &str,
     mr_human_number: u64,
-    maybe_issue_number: Option<String>,
     no_ff: bool)
     -> Result<(), String> {
     let mut command = Command::new("git");
@@ -101,12 +100,7 @@ pub fn merge(
     } else {
         "update"
     };
-    let maybe_issue_number_string = if let Some(issue_number) = maybe_issue_number {
-        format!(" #{}", issue_number).to_owned()
-    } else {
-        "".to_owned()
-    };
-    let message_arg = &*format!("-m \"Automatic {} of MR !{}{}\"", action, mr_human_number, maybe_issue_number_string);
+    let message_arg = &*format!("-m \"Automatic {} of MR !{}\"", action, mr_human_number);
     if no_ff {
         builder.arg("--no-ff");
     }
