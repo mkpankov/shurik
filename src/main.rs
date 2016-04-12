@@ -6,12 +6,15 @@ extern crate iron;
 extern crate log;
 extern crate env_logger;
 
+#[macro_use]
+extern crate quick_error;
 extern crate regex;
 extern crate router;
 extern crate rustc_serialize;
 extern crate serde_json;
 extern crate time;
 extern crate toml;
+extern crate url;
 
 use clap::App;
 use hyper::Client;
@@ -595,21 +598,8 @@ fn handle_build_request(
     let gitlab_api_root = config.lookup("gitlab.url").unwrap().as_str().unwrap();
     let key_path = config.lookup("gitlab.ssh-key-path").unwrap().as_str().unwrap();
 
-    let client = Client::new();
-
-    let mut res = client.post(&*format!("{}/session", gitlab_api_root))
-        .body(&*format!("login={}&password={}", gitlab_user, gitlab_password))
-        .send()
-        .unwrap();
-    assert_eq!(res.status, hyper::status::StatusCode::Created);
-    let mut text = String::new();
-    res.read_to_string(&mut text).unwrap();
-    let json: serde_json::value::Value = serde_json::from_str(&text).unwrap();
-    debug!("object? {}", json.is_object());
-    let obj = json.as_object().unwrap();
-    let private_token = obj.get("private_token").unwrap().as_string().unwrap();
-    info!("Logged in to GitLab");
-    debug!("private_token == {}", private_token);
+    let gitlab_api = gitlab::Api::new(gitlab_api_root, key_path).unwrap();
+    let gitlab_session = gitlab_api.login(gitlab_user, gitlab_password).unwrap();
 
     loop {
         debug!("handle_build_request iterated: {}", time::precise_time_ns());
@@ -652,12 +642,12 @@ fn handle_build_request(
         let issue_number = request.issue_number;
         if let None = issue_number {
             let message = &*format!("{{ \"note\": \":no_entry_sign: в заголовке MR нет номера задачи. Отредактируйте его и сделайте r+\"}}");
-            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            gitlab_session.post_comment(mr_id, message);
             continue;
         }
         if do_update {
             let message = &*format!("{{ \"note\": \":hourglass: проверяю коммит {}\"}}", arg);
-            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            gitlab_session.post_comment(mr_id, message);
 
             for p in project_set.projects.values() {
                 info!("Resetting project {}", p.name);
@@ -685,7 +675,7 @@ fn handle_build_request(
                 Ok(_) => {},
                 Err(_) => {
                     let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge)\"}}");
-                    gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                    gitlab_session.post_comment(mr_id, message);
                     continue;
                 }
             }
@@ -795,13 +785,13 @@ fn handle_build_request(
                     {
                         info!("The MR was rejected in the meantime, not merging");
                         let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR запретили. Не сливаю\"}}");
-                        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                        gitlab_session.post_comment(mr_id, message);
                         continue;
                     }
                 } else {
                     info!("MR head is different commit, not merging");
                     let message = &*format!("{{ \"note\": \":no_entry_sign: пока мы тестировали, MR обновился. Не сливаю\"}}");
-                    gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                    gitlab_session.post_comment(mr_id, message);
                     continue;
                 }
             } else {
@@ -830,13 +820,13 @@ fn handle_build_request(
         if do_merge {
             info!("Merging");
             let message = &*format!("{{ \"note\": \":sunny: тесты прошли, сливаю\"}}");
-            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            gitlab_session.post_comment(mr_id, message);
             git::checkout(workspace_dir, "master");
             match git::merge(workspace_dir, "try", mr_human_number, issue_number, true) {
                 Ok(_) => {},
                 Err(_) => {
                     let message = &*format!("{{ \"note\": \":umbrella: не смог слить MR. Пожалуйста, обновите его (rebase или merge)\"}}");
-                    gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+                    gitlab_session.post_comment(mr_id, message);
                     continue;
                 },
             }
@@ -850,13 +840,13 @@ fn handle_build_request(
             save_state(state_save_dir, &project_set.name, mr_storage);
             info!("Updated existing MR");
             let message = &*format!("{{ \"note\": \":ok_hand: успешно\"}}");
-            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            gitlab_session.post_comment(mr_id, message);
 
             for mr in mr_storage.lock().unwrap().values() {
                 info!("MR to try merge: {:?}", mr);
                 git::set_remote_url(workspace_dir, &ssh_url);
                 git::set_user(workspace_dir, "Shurik", "shurik@example.com");
-                mr_try_merge_and_report_if_impossible(mr, gitlab_api_root, private_token, workspace_dir, key_path);
+                mr_try_merge_and_report_if_impossible(mr, &gitlab_session, workspace_dir, key_path);
             }
             continue;
         } else {
@@ -871,7 +861,7 @@ fn handle_build_request(
 
             let message = &*format!("{{ \"note\": \"{} тестирование завершено [{}]({})\"}}", indicator, build_result_message, build_url);
 
-            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            gitlab_session.post_comment(mr_id, message);
             {
                 let mut mrs = mr_storage.lock().unwrap();
                 let mut r = mrs.get_mut(&mr_id).unwrap();
@@ -890,8 +880,7 @@ fn handle_build_request(
 }
 
 fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
-                                         gitlab_api_root: &str,
-                                         private_token: &str,
+                                         gitlab_session: &gitlab::Session,
                                          workspace_dir: &str,
                                          key_path: &str)
 {
@@ -903,7 +892,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
     debug!("{:?}", mr.status);
     if merge_status != MergeStatus::CanBeMerged {
         let message = &*format!("{{ \"note\": \":umbrella: в результате изменений целевой ветки, этот MR больше нельзя слить. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: {}\"}}", arg);
-        gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+        gitlab_session.post_comment(mr_id, message);
         return;
     }
     git::reset_hard(workspace_dir, None);
@@ -917,7 +906,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
         Ok(_) => {},
         Err(_) => {
             let message = &*format!("{{ \"note\": \":umbrella: не удалось слить master в MR. Пожалуйста, обновите его (rebase или merge). Проверенный коммит: {}\"}}", arg);
-            gitlab::post_comment(gitlab_api_root, private_token, mr_id, message);
+            gitlab_session.post_comment(mr_id, message);
             return;
         }
     }
