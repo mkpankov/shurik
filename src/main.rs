@@ -949,15 +949,11 @@ fn resolve_ids(his: &Mutex<HumanIdStorage>) {
 fn main() {
     env_logger::init().unwrap();
 
-    let matches =
+    let _ =
         App::new("shurik")
         .version("0.1")
         .author("Mikhail Pankov <mikhail.pankov@kaspersky.com>")
         .about("A commit gatekeeper for SDK")
-        .args_from_usage(
-            "-n --dry-run 'Don\'t actually do anything, just print what is to be done'
-             -p --gitlab-port=[GITLAB_PORT] 'Port to listen for GitLab WebHooks'
-             -a --gitlab-address=[GITLAB_ADDRESS] 'Address to listen for GitLab WebHooks'")
         .get_matches();
 
     let mut file = File::open("Config.toml").unwrap();
@@ -972,27 +968,20 @@ fn main() {
     let value: toml::Value = toml::Value::Table(maybe_value.unwrap());
     let config: Arc<toml::Value> = Arc::new(value);
 
-    debug!("Dry run: {}", matches.is_present("dry-run"));
     let gitlab_port =
-        matches
-        .value_of("GITLAB_PORT")
+        config.lookup("gitlab.webhook-port")
         .unwrap_or(
-            config.lookup("gitlab.webhook-port")
-                .unwrap_or(
-                    &toml::Value::String("10042".to_owned()))
-                .as_str()
-                .unwrap())
-        .parse().unwrap_or(10042);
+            &toml::Value::String("10042".to_owned()))
+        .as_str()
+        .unwrap()
+        .parse().unwrap();
     let default_address = toml::Value::String("localhost".to_owned());
     let gitlab_address =
-        matches
-        .value_of("GITLAB_ADDRESS")
+        config.lookup("gitlab.webhook-address")
         .unwrap_or(
-            config.lookup("gitlab.webhook-address")
-                .unwrap_or(
-                    &default_address)
-                .as_str()
-                .unwrap())
+            &default_address)
+        .as_str()
+        .unwrap()
         .to_owned();
     info!("GitLab port: {}", gitlab_port);
     info!("GitLab address: {}", gitlab_address);
