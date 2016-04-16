@@ -99,7 +99,6 @@ struct MergeRequest {
 struct WorkerTask {
     id: MrUid,
     human_number: u64,
-    ssh_url: String,
     checkout_sha: String,
     job_type: JobType,
     approval_status: ApprovalStatus,
@@ -449,6 +448,11 @@ fn handle_comment(
             let mut mr = mr_storage.get_mut(&id).unwrap();
             mr.issue_number = issue_number.clone();
         }
+        let projects = &project_set.projects;
+        let project = &projects[&project_id];
+        {
+            *project.ssh_url.lock().unwrap() = ssh_url.to_owned();
+        }
 
         if needs_notification {
             let job_type = match new_approval_status {
@@ -458,7 +462,6 @@ fn handle_comment(
             let new_task = WorkerTask {
                 id: id,
                 human_number: mr_human_number,
-                ssh_url: ssh_url.to_owned(),
                 checkout_sha: last_commit_id,
                 job_type: job_type,
                 approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
@@ -588,9 +591,9 @@ fn handle_build_request(
         let arg = request.checkout_sha.clone();
         let mr_id = request.id;
         let mr_human_number = request.human_number;
-        let ssh_url = request.ssh_url.clone();
         let projects = &project_set.projects;
         let project = &projects[&mr_id.target_project_id];
+        let ssh_url = &project.ssh_url;
         let workspace_dir = &project.workspace_dir.to_str().unwrap();
 
         let mut do_update = false;
@@ -626,7 +629,7 @@ fn handle_build_request(
                 git::push(workspace_dir, key_path, true);
             }
 
-            git::set_remote_url(workspace_dir, &ssh_url);
+            git::set_remote_url(workspace_dir, &ssh_url.lock().unwrap());
             git::set_user(workspace_dir, "Shurik", "shurik@example.com");
             git::fetch(workspace_dir, key_path);
             git::reset_hard(workspace_dir, None);
@@ -808,7 +811,7 @@ fn handle_build_request(
 
             for mr in mr_storage.lock().unwrap().values() {
                 info!("MR to try merge: {:?}", mr);
-                git::set_remote_url(workspace_dir, &ssh_url);
+                git::set_remote_url(workspace_dir, &ssh_url.lock().unwrap());
                 git::set_user(workspace_dir, "Shurik", "shurik@example.com");
                 mr_try_merge_and_report_if_impossible(mr, &gitlab_session, workspace_dir, key_path);
             }
@@ -878,7 +881,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
 
 fn scan_state_and_schedule_jobs(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
-    project_set: &ProjectSet,
+    _project_set: &ProjectSet,
     queue: &(Mutex<LinkedList<WorkerTask>>, Condvar))
 {
     let mr_storage = &*mr_storage.lock().unwrap();
@@ -896,13 +899,9 @@ fn scan_state_and_schedule_jobs(
                             ApprovalStatus::Approved => JobType::Merge,
                             _ => JobType::Try,
                         };
-                        let project_id = mr.id.target_project_id;
-                        let project = &project_set.projects[&project_id];
-                        let ssh_url = &project.ssh_url;
                         let new_task = WorkerTask {
                             id: mr.id,
                             job_type: job_type,
-                            ssh_url: ssh_url.lock().unwrap().clone(),
                             approval_status: mr.approval_status,
                             checkout_sha: mr.checkout_sha.clone(),
                             human_number: mr.human_number,
