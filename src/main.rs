@@ -88,7 +88,6 @@ enum MergeStatus {
 struct MergeRequest {
     id: MrUid,
     human_number: u64,
-    ssh_url: String,
     checkout_sha: String,
     status: Status,
     approval_status: ApprovalStatus,
@@ -113,20 +112,20 @@ enum JobType {
     Merge
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct Project {
-    id: i64,
+    id: u64,
     name: String,
     workspace_dir: PathBuf,
     reviewers: Vec<String>,
     job_url: String,
-    ssh_url: String,
+    ssh_url: Mutex<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct ProjectSet {
     name: String,
-    projects: HashMap<i64, Project>,
+    projects: HashMap<u64, Project>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -157,7 +156,6 @@ impl Decodable for MrUid {
 fn update_or_create_mr(
     storage: &mut HashMap<MrUid, MergeRequest>,
     id: MrUid,
-    ssh_url: &str,
     human_number: u64,
     old_statuses: &[Status],
     new_checkout_sha: Option<&str>,
@@ -194,7 +192,6 @@ fn update_or_create_mr(
 
     let incoming = MergeRequest {
         id: id,
-        ssh_url: ssh_url.to_owned(),
         human_number: human_number,
         checkout_sha: new_checkout_sha.unwrap().to_owned(),
         status: new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)),
@@ -287,6 +284,13 @@ fn handle_mr(
 
     let action = json.lookup("object_attributes.action").unwrap().as_string().unwrap();
     let ssh_url = json.lookup("object_attributes.target.ssh_url").unwrap().as_string().unwrap();
+
+    let project = &project_set.projects[&project_id];
+    {
+        let mut ssh_url_ref = project.ssh_url.lock().unwrap();
+        *ssh_url_ref = ssh_url.to_owned();
+    }
+
     let new_status = match action {
         "open" | "reopen" => Status::Open(SubStatusOpen::WaitingForReview),
         "close" => Status::Closed,
@@ -311,7 +315,6 @@ fn handle_mr(
         update_or_create_mr(
             &mut *mr_storage.lock().unwrap(),
             id,
-            ssh_url,
             mr_human_number,
             &[],
             Some(checkout_sha),
@@ -355,7 +358,7 @@ fn handle_comment(
 
     let project_id = json.lookup("object_attributes.project_id").unwrap().as_u64().unwrap();
     let projects = &project_set.projects;
-    let project = &projects[&(project_id as i64)];
+    let project = &projects[&project_id];
     let reviewers = &project.reviewers;
 
     let is_comment_author_self = "shurik" == username;
@@ -434,7 +437,6 @@ fn handle_comment(
         update_or_create_mr(
             &mut *mr_storage.lock().unwrap(),
             id,
-            ssh_url,
             mr_human_number,
             &old_statuses,
             Some(&last_commit_id),
@@ -488,7 +490,7 @@ fn perform_or_continue_jenkins_build(
     let mut current_build_status: SubStatusBuilding;
 
     let projects = &project_set.projects;
-    let project = &projects[&(mr_id.target_project_id as i64)];
+    let project = &projects[&mr_id.target_project_id];
     let workspace_dir = &project.workspace_dir.to_str().unwrap();
     let http_user = config.lookup("jenkins.user").unwrap().as_str().unwrap();
     let http_password = config.lookup("jenkins.password").unwrap().as_str().unwrap();
@@ -588,7 +590,7 @@ fn handle_build_request(
         let mr_human_number = request.human_number;
         let ssh_url = request.ssh_url.clone();
         let projects = &project_set.projects;
-        let project = &projects[&(mr_id.target_project_id as i64)];
+        let project = &projects[&mr_id.target_project_id];
         let workspace_dir = &project.workspace_dir.to_str().unwrap();
 
         let mut do_update = false;
@@ -614,7 +616,7 @@ fn handle_build_request(
             for p in project_set.projects.values() {
                 info!("Resetting project {}", p.name);
                 let workspace_dir = p.workspace_dir.to_str().unwrap();
-                git::set_remote_url(workspace_dir, &p.ssh_url);
+                git::set_remote_url(workspace_dir, &p.ssh_url.lock().unwrap());
                 git::set_user(workspace_dir, "Shurik", "shurik@example.com");
                 git::fetch(workspace_dir, key_path);
                 git::reset_hard(workspace_dir, None);
@@ -876,6 +878,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
 
 fn scan_state_and_schedule_jobs(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
+    project_set: &ProjectSet,
     queue: &(Mutex<LinkedList<WorkerTask>>, Condvar))
 {
     let mr_storage = &*mr_storage.lock().unwrap();
@@ -893,10 +896,13 @@ fn scan_state_and_schedule_jobs(
                             ApprovalStatus::Approved => JobType::Merge,
                             _ => JobType::Try,
                         };
+                        let project_id = mr.id.target_project_id;
+                        let project = &project_set.projects[&project_id];
+                        let ssh_url = &project.ssh_url;
                         let new_task = WorkerTask {
                             id: mr.id,
                             job_type: job_type,
-                            ssh_url: mr.ssh_url.clone(),
+                            ssh_url: ssh_url.lock().unwrap().clone(),
                             approval_status: mr.approval_status,
                             checkout_sha: mr.checkout_sha.clone(),
                             human_number: mr.human_number,
@@ -962,7 +968,7 @@ fn main() {
         let name = project_set_toml.lookup("name").unwrap().as_str().unwrap();
 
         for project_toml in project_set_toml.lookup("project").unwrap().as_slice().unwrap() {
-            let key = project_toml.lookup("id").unwrap().as_integer().unwrap();
+            let key = project_toml.lookup("id").unwrap().as_integer().unwrap() as u64;
             let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
             if toml_slice.len() == 0 {
                 panic!("Project has no reviewers! That would make it impossible to maintain it. Project in question: {:?}", project_toml);
@@ -979,16 +985,15 @@ fn main() {
                 reviewers: string_vec,
                 job_url: job_url.to_owned(),
                 name: name.to_owned(),
-                ssh_url: ssh_url.to_owned()
+                ssh_url: Mutex::new(ssh_url.to_owned())
             };
             projects.insert(key, p);
         }
         info!("Read projects: {:?}", projects);
 
         let new_ps = ProjectSet { name: name.to_owned(), projects: projects };
-        let new_ps_copy = new_ps.clone();
         if let Some(ps) = project_sets.insert(name, new_ps) {
-            panic!("Project set with name {} is already defined: {:?}. Attempted to define another project set with such name: {:?}. The name must be unique.", name, ps, new_ps_copy);
+            panic!("Project set with name {} is already defined: {:?}. Attempted to define another project set with such name: {:?}. The name must be unique.", name, ps, project_sets[name]);
         }
     }
 
@@ -1013,6 +1018,7 @@ fn main() {
         let psa = Arc::new(project_set);
         let psa2 = psa.clone();
         let psa3 = psa.clone();
+        let psa4 = psa.clone();
 
         let projects = &psa.clone().projects;
         for (id, p) in projects {
@@ -1045,7 +1051,7 @@ fn main() {
             handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*ssd3, &gitlab_session);
         });
         builders.push(builder);
-        scan_state_and_schedule_jobs(&*mrs4, &*queue2);
+        scan_state_and_schedule_jobs(&*mrs4, &*psa4, &*queue2);
 
         router.post(format!("/api/v1/{}/mr", psid),
                     move |req: &mut Request|
