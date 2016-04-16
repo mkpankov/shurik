@@ -18,7 +18,6 @@ extern crate url;
 
 use clap::App;
 use iron::*;
-use regex::Regex;
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use rustc_serialize::json::{self};
 
@@ -92,7 +91,6 @@ struct MergeRequest {
     status: Status,
     approval_status: ApprovalStatus,
     merge_status: MergeStatus,
-    issue_number: Option<String>,
 }
 
 #[derive(Debug)]
@@ -100,7 +98,6 @@ struct WorkerTask {
     id: MrUid,
     job_type: JobType,
     approval_status: ApprovalStatus,
-    issue_number: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -194,7 +191,6 @@ fn update_or_create_mr(
         status: new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)),
         approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
         merge_status: new_merge_status.unwrap_or(MergeStatus::CanBeMerged),
-        issue_number: None,
     };
 
     storage.insert(id, incoming);
@@ -375,11 +371,6 @@ fn handle_comment(
 
     let title = json.lookup("merge_request.title").unwrap().as_string().unwrap();
     info!("{}", title);
-    let re = Regex::new(r"(?:^|\s+)#(\d+)\b").unwrap();
-    let mut issue_number = None;
-    if let Some(caps) = re.captures(title) {
-        issue_number = Some(caps.at(1).unwrap().to_owned());
-    }
 
     let attrs = obj.get("object_attributes").unwrap().as_object().unwrap();
     let note = attrs.get("note").unwrap().as_string().unwrap();
@@ -441,11 +432,6 @@ fn handle_comment(
             new_approval_status,
             None,
             );
-        {
-            let mr_storage = &mut *mr_storage.lock().unwrap();
-            let mut mr = mr_storage.get_mut(&id).unwrap();
-            mr.issue_number = issue_number.clone();
-        }
         let projects = &project_set.projects;
         let project = &projects[&project_id];
         {
@@ -461,7 +447,6 @@ fn handle_comment(
                 id: id,
                 job_type: job_type,
                 approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
-                issue_number: issue_number,
             };
 
             let &(ref list, ref cvar) = worker_queue;
@@ -909,7 +894,6 @@ fn scan_state_and_schedule_jobs(
                             id: mr.id,
                             job_type: job_type,
                             approval_status: mr.approval_status,
-                            issue_number: mr.issue_number.clone(),
                         };
                         let &(ref list, ref cvar) = queue;
                         list.lock().unwrap().push_back(new_task);
