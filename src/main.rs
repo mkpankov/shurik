@@ -98,7 +98,6 @@ struct MergeRequest {
 #[derive(Debug)]
 struct WorkerTask {
     id: MrUid,
-    checkout_sha: String,
     job_type: JobType,
     approval_status: ApprovalStatus,
     issue_number: Option<String>,
@@ -460,7 +459,6 @@ fn handle_comment(
             };
             let new_task = WorkerTask {
                 id: id,
-                checkout_sha: last_commit_id,
                 job_type: job_type,
                 approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
                 issue_number: issue_number,
@@ -586,13 +584,14 @@ fn handle_build_request(
         let request = list.pop_front().unwrap();
         info!("Got the request: {:?}", request);
 
-        let arg = request.checkout_sha.clone();
         let mr_id = request.id;
         let mr_human_number;
+        let arg;
         {
             let mr_storage = mr_storage.lock().unwrap();
             let ref mr = mr_storage[&mr_id];
             mr_human_number = mr.human_number;
+            arg = mr.checkout_sha.to_owned();
         }
         let projects = &project_set.projects;
         let project = &projects[&mr_id.target_project_id];
@@ -748,8 +747,12 @@ fn handle_build_request(
         save_state(state_save_dir, &project_set.name, mr_storage);
 
         {
-            if let Some(new_request) = mr_storage.lock().unwrap().get(&mr_id) {
-                if new_request.checkout_sha == request.checkout_sha {
+            let mr_storage = mr_storage.lock().unwrap();
+            if let Some(new_request) = mr_storage.get(&mr_id) {
+                let ref new_checkout_sha = mr_storage[&mr_id].checkout_sha;
+                let checkout_sha = arg;
+
+                if *new_checkout_sha == checkout_sha {
                     if request.approval_status != new_request.approval_status
                         && new_request.approval_status != ApprovalStatus::Approved
                     {
@@ -906,7 +909,6 @@ fn scan_state_and_schedule_jobs(
                             id: mr.id,
                             job_type: job_type,
                             approval_status: mr.approval_status,
-                            checkout_sha: mr.checkout_sha.clone(),
                             issue_number: mr.issue_number.clone(),
                         };
                         let &(ref list, ref cvar) = queue;
