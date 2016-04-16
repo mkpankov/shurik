@@ -98,7 +98,6 @@ struct MergeRequest {
 #[derive(Debug)]
 struct WorkerTask {
     id: MrUid,
-    human_number: u64,
     checkout_sha: String,
     job_type: JobType,
     approval_status: ApprovalStatus,
@@ -461,7 +460,6 @@ fn handle_comment(
             };
             let new_task = WorkerTask {
                 id: id,
-                human_number: mr_human_number,
                 checkout_sha: last_commit_id,
                 job_type: job_type,
                 approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
@@ -590,7 +588,12 @@ fn handle_build_request(
 
         let arg = request.checkout_sha.clone();
         let mr_id = request.id;
-        let mr_human_number = request.human_number;
+        let mr_human_number;
+        {
+            let mr_storage = mr_storage.lock().unwrap();
+            let ref mr = mr_storage[&mr_id];
+            mr_human_number = mr.human_number;
+        }
         let projects = &project_set.projects;
         let project = &projects[&mr_id.target_project_id];
         let ssh_url = &project.ssh_url;
@@ -904,7 +907,6 @@ fn scan_state_and_schedule_jobs(
                             job_type: job_type,
                             approval_status: mr.approval_status,
                             checkout_sha: mr.checkout_sha.clone(),
-                            human_number: mr.human_number,
                             issue_number: mr.issue_number.clone(),
                         };
                         let &(ref list, ref cvar) = queue;
