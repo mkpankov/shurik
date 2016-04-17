@@ -918,17 +918,8 @@ fn main() {
         .about("A commit gatekeeper for SDK")
         .get_matches();
 
-    let mut file = File::open("Config.toml").unwrap();
-    let mut toml = String::new();
-    file.read_to_string(&mut toml).unwrap();
-
-    let mut parser = toml::Parser::new(&toml);
-    let maybe_value = parser.parse();
-    if let None = maybe_value {
-        panic!("Couldn't parse config. Errors: {:?}", parser.errors);
-    }
-    let value: toml::Value = toml::Value::Table(maybe_value.unwrap());
-    let config: Arc<toml::Value> = Arc::new(value);
+    let value = open_parse_config();
+    let config: Arc<toml::Value> = Arc::new(value.unwrap());
 
     let gitlab_port =
         config.lookup("gitlab.webhook-port")
@@ -1050,4 +1041,30 @@ fn main() {
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
         .expect("Couldn't start the web server");
+}
+
+#[derive(Debug)]
+pub struct ParseError;
+
+quick_error! {
+    #[derive(Debug)]
+    pub enum ConfigError {
+        Read(err: ::std::io::Error) {
+            from()
+        }
+        Parse(err: ParseError) {
+            from()
+        }
+    }
+}
+
+fn open_parse_config() -> Result<toml::Value, ConfigError> {
+    let mut file = try!(File::open("Config.toml"));
+    let mut toml = String::new();
+    try!(file.read_to_string(&mut toml));
+
+    let mut parser = toml::Parser::new(&toml);
+    let maybe_value = try!(parser.parse().ok_or(ParseError));
+    let value: toml::Value = toml::Value::Table(maybe_value);
+    Ok(value)
 }
