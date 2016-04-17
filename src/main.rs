@@ -1205,7 +1205,20 @@ fn produce_project_sets(
             if reviewers_slice.len() == 0 {
                 panic!("Project has no reviewers! That would make it impossible to maintain it. Project in question: {:?}", project_toml);
             }
-            let str_vec: Vec<&str> = reviewers_slice.iter().map(|x| x.as_str().unwrap()).collect();
+            let str_vec: Vec<&str> =
+                reviewers_slice
+                .iter()
+                .map(
+                    |x| x.as_str().ok_or(StrConversionError))
+                .take_while(
+                    |x| x.is_ok())
+                .map(
+                    |x| x.unwrap())
+                .collect();
+            if str_vec.len() != reviewers_slice.len() {
+                return Err(From::from(StrConversionError));
+            }
+
             let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
 
             let job_url = config_lookup_convert!(
