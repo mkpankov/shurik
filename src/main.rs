@@ -923,41 +923,7 @@ fn main() {
 
     let (gitlab_address, gitlab_port) = get_gitlab_listener_config(&*config).unwrap();
 
-    let mut project_sets = HashMap::new();
-
-    for project_set_toml in config.lookup("project-set").unwrap().as_slice().unwrap() {
-        let mut projects = HashMap::new();
-        let name = project_set_toml.lookup("name").unwrap().as_str().unwrap();
-
-        for project_toml in project_set_toml.lookup("project").unwrap().as_slice().unwrap() {
-            let key = project_toml.lookup("id").unwrap().as_integer().unwrap() as u64;
-            let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
-            if toml_slice.len() == 0 {
-                panic!("Project has no reviewers! That would make it impossible to maintain it. Project in question: {:?}", project_toml);
-            }
-            let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
-            let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
-            let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
-            let name = project_toml.lookup("name").unwrap().as_str().unwrap();
-            let ssh_url = project_toml.lookup("ssh-url").unwrap().as_str().unwrap();
-
-            let p = Project {
-                id: key,
-                workspace_dir: PathBuf::from(project_toml.lookup("workspace-dir").unwrap().as_str().unwrap()),
-                reviewers: string_vec,
-                job_url: job_url.to_owned(),
-                name: name.to_owned(),
-                ssh_url: Mutex::new(ssh_url.to_owned())
-            };
-            projects.insert(key, p);
-        }
-        info!("Read projects: {:?}", projects);
-
-        let new_ps = ProjectSet { name: name.to_owned(), projects: projects };
-        if let Some(ps) = project_sets.insert(name, new_ps) {
-            panic!("Project set with name {} is already defined: {:?}. Attempted to define another project set with such name: {:?}. The name must be unique.", name, ps, project_sets[name]);
-        }
-    }
+    let project_sets = produce_project_sets(&*config);
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
@@ -1165,4 +1131,47 @@ fn get_gitlab_login_config(
         password: gitlab_password.to_owned(),
         api_root: gitlab_api_root,
     })
+}
+
+fn produce_project_sets(
+    config: &toml::Value)
+    -> HashMap<&str, ProjectSet> {
+
+    let mut project_sets = HashMap::new();
+
+    for project_set_toml in config.lookup("project-set").unwrap().as_slice().unwrap() {
+        let mut projects = HashMap::new();
+        let name = project_set_toml.lookup("name").unwrap().as_str().unwrap();
+
+        for project_toml in project_set_toml.lookup("project").unwrap().as_slice().unwrap() {
+            let key = project_toml.lookup("id").unwrap().as_integer().unwrap() as u64;
+            let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
+            if toml_slice.len() == 0 {
+                panic!("Project has no reviewers! That would make it impossible to maintain it. Project in question: {:?}", project_toml);
+            }
+            let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
+            let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
+            let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
+            let name = project_toml.lookup("name").unwrap().as_str().unwrap();
+            let ssh_url = project_toml.lookup("ssh-url").unwrap().as_str().unwrap();
+
+            let p = Project {
+                id: key,
+                workspace_dir: PathBuf::from(project_toml.lookup("workspace-dir").unwrap().as_str().unwrap()),
+                reviewers: string_vec,
+                job_url: job_url.to_owned(),
+                name: name.to_owned(),
+                ssh_url: Mutex::new(ssh_url.to_owned())
+            };
+            projects.insert(key, p);
+        }
+        info!("Read projects: {:?}", projects);
+
+        let new_ps = ProjectSet { name: name.to_owned(), projects: projects };
+        if let Some(ps) = project_sets.insert(name, new_ps) {
+            panic!("Project set with name {} is already defined: {:?}. Attempted to define another project set with such name: {:?}. The name must be unique.", name, ps, project_sets[name]);
+        }
+    }
+
+    project_sets
 }
