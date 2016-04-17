@@ -923,7 +923,7 @@ fn main() {
 
     let (gitlab_address, gitlab_port) = get_gitlab_listener_config(&*config).unwrap();
 
-    let project_sets = produce_project_sets(&*config);
+    let project_sets = produce_project_sets(&*config).unwrap();
 
     let mut router = router::Router::new();
     let mut builders = Vec::new();
@@ -1026,6 +1026,8 @@ pub struct IntegerConversionError;
 pub struct StrConversionError;
 #[derive(Debug)]
 pub struct UrlConversionError;
+#[derive(Debug)]
+pub struct SliceConversionError;
 
 quick_error! {
     #[derive(Debug)]
@@ -1074,6 +1076,8 @@ pub struct UserLookupError;
 pub struct PasswordLookupError;
 #[derive(Debug)]
 pub struct ApiRootLookupError;
+#[derive(Debug)]
+pub struct ProjectSetLookupError;
 
 quick_error! {
     #[derive(Debug)]
@@ -1094,6 +1098,24 @@ quick_error! {
             from()
         }
         UrlConversion(err: UrlConversionError) {
+            from()
+        }
+    }
+}
+
+quick_error! {
+    #[derive(Debug)]
+    pub enum ProjectSetProductionError {
+        ProjectSetLookup(err: ProjectSetLookupError) {
+            from()
+        }
+        IntegerConversion(err: IntegerConversionError) {
+            from()
+        }
+        StrConversion(err: StrConversionError) {
+            from()
+        }
+        SliceConversion(err: SliceConversionError) {
             from()
         }
     }
@@ -1135,11 +1157,16 @@ fn get_gitlab_login_config(
 
 fn produce_project_sets(
     config: &toml::Value)
-    -> HashMap<&str, ProjectSet> {
+    -> Result<HashMap<&str, ProjectSet>, ProjectSetProductionError> {
 
     let mut project_sets = HashMap::new();
 
-    for project_set_toml in config.lookup("project-set").unwrap().as_slice().unwrap() {
+    let project_set_value = try!(
+        config.lookup("project-set").ok_or(ProjectSetLookupError));
+    let project_set_slice = try!(
+        project_set_value.as_slice().ok_or(SliceConversionError));
+
+    for project_set_toml in project_set_slice {
         let mut projects = HashMap::new();
         let name = project_set_toml.lookup("name").unwrap().as_str().unwrap();
 
@@ -1173,5 +1200,5 @@ fn produce_project_sets(
         }
     }
 
-    project_sets
+    Ok(project_sets)
 }
