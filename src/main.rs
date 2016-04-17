@@ -1077,7 +1077,7 @@ pub struct PasswordLookupError;
 #[derive(Debug)]
 pub struct ApiRootLookupError;
 #[derive(Debug)]
-pub struct ProjectSetLookupError;
+pub struct GenericLookupError;
 
 quick_error! {
     #[derive(Debug)]
@@ -1106,7 +1106,7 @@ quick_error! {
 quick_error! {
     #[derive(Debug)]
     pub enum ProjectSetProductionError {
-        ProjectSetLookup(err: ProjectSetLookupError) {
+        GenericLookup(err: GenericLookupError) {
             from()
         }
         IntegerConversion(err: IntegerConversionError) {
@@ -1177,28 +1177,58 @@ fn produce_project_sets(
 
     let project_set_slice = config_lookup_convert!(
         config :
-        "project-set" => ProjectSetLookupError,
+        "project-set" => GenericLookupError,
         as_slice => SliceConversionError);
 
     for project_set_toml in project_set_slice {
         let mut projects = HashMap::new();
-        let name = project_set_toml.lookup("name").unwrap().as_str().unwrap();
+        let name = config_lookup_convert!(
+            project_set_toml :
+            "name" => GenericLookupError,
+            as_str => StrConversionError);
 
-        for project_toml in project_set_toml.lookup("project").unwrap().as_slice().unwrap() {
-            let key = project_toml.lookup("id").unwrap().as_integer().unwrap() as u64;
-            let toml_slice = project_toml.lookup("reviewers").unwrap().as_slice().unwrap();
-            if toml_slice.len() == 0 {
+        let project_slice = config_lookup_convert!(
+            project_set_toml :
+            "project" => GenericLookupError,
+            as_slice => SliceConversionError);
+
+        for project_toml in project_slice {
+            let key = config_lookup_convert!(
+                project_toml :
+                "id" => GenericLookupError,
+                as_integer => IntegerConversionError)
+                as u64;
+            let reviewers_slice = config_lookup_convert!(
+                project_toml :
+                "reviewers" => GenericLookupError,
+                as_slice => SliceConversionError);
+            if reviewers_slice.len() == 0 {
                 panic!("Project has no reviewers! That would make it impossible to maintain it. Project in question: {:?}", project_toml);
             }
-            let str_vec: Vec<&str> = toml_slice.iter().map(|x| x.as_str().unwrap()).collect();
+            let str_vec: Vec<&str> = reviewers_slice.iter().map(|x| x.as_str().unwrap()).collect();
             let string_vec: Vec<String> = str_vec.iter().map(|x: &&str| -> String { (*x).to_owned() }).collect();
-            let job_url = project_toml.lookup("job-url").unwrap().as_str().unwrap();
-            let name = project_toml.lookup("name").unwrap().as_str().unwrap();
-            let ssh_url = project_toml.lookup("ssh-url").unwrap().as_str().unwrap();
+
+            let job_url = config_lookup_convert!(
+                project_toml :
+                "job-url" => GenericLookupError,
+                as_str => StrConversionError);
+            let name = config_lookup_convert!(
+                project_toml :
+                "name" => GenericLookupError,
+                as_str => StrConversionError);
+            let ssh_url = config_lookup_convert!(
+                project_toml :
+                "ssh-url" => GenericLookupError,
+                as_str => StrConversionError);
+            let workspace_dir = PathBuf::from(
+                config_lookup_convert!(
+                    project_toml :
+                    "workspace-dir" => GenericLookupError,
+                    as_str => StrConversionError));
 
             let p = Project {
                 id: key,
-                workspace_dir: PathBuf::from(project_toml.lookup("workspace-dir").unwrap().as_str().unwrap()),
+                workspace_dir: workspace_dir,
                 reviewers: string_vec,
                 job_url: job_url.to_owned(),
                 name: name.to_owned(),
