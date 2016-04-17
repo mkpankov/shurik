@@ -921,7 +921,7 @@ fn main() {
     let value = open_parse_config();
     let config: Arc<toml::Value> = Arc::new(value.unwrap());
 
-    let (gitlab_address, gitlab_port) = get_listener_config(&*config).unwrap();
+    let (gitlab_address, gitlab_port) = get_gitlab_listener_config(&*config).unwrap();
 
     let mut project_sets = HashMap::new();
 
@@ -963,9 +963,10 @@ fn main() {
     let mut builders = Vec::new();
     let state_save_dir = config.lookup("general.state-save-dir").unwrap().as_str().unwrap();
 
-    let gitlab_user = config.lookup("gitlab.user").unwrap().as_str().unwrap();
-    let gitlab_password = config.lookup("gitlab.password").unwrap().as_str().unwrap();
-    let gitlab_api_root = config.lookup("gitlab.url").unwrap().as_str().unwrap();
+    let gitlab_login_config = get_gitlab_login_config(&*config).unwrap();
+    let gitlab_user = &gitlab_login_config.user;
+    let gitlab_password = &gitlab_login_config.password;
+    let gitlab_api_root = gitlab_login_config.api_root;
 
     let gitlab_api = gitlab::Api::new(gitlab_api_root).unwrap();
     let gitlab_session = gitlab_api.login(gitlab_user, gitlab_password).unwrap();
@@ -1057,6 +1058,8 @@ fn open_parse_config() -> Result<toml::Value, ConfigError> {
 pub struct IntegerConversionError;
 #[derive(Debug)]
 pub struct StrConversionError;
+#[derive(Debug)]
+pub struct UrlConversionError;
 
 quick_error! {
     #[derive(Debug)]
@@ -1070,7 +1073,7 @@ quick_error! {
     }
 }
 
-fn get_listener_config(
+fn get_gitlab_listener_config(
     config: &toml::Value)
     -> Result<(String, u16), ListenerConfigError> {
 
@@ -1091,4 +1094,75 @@ fn get_listener_config(
     info!("GitLab port: {}", gitlab_port);
     info!("GitLab address: {}", gitlab_address);
     Ok((gitlab_address, gitlab_port))
+}
+
+struct LoginConfig {
+    user: String,
+    password: String,
+    api_root: hyper::Url,
+}
+
+#[derive(Debug)]
+pub struct UserLookupError;
+#[derive(Debug)]
+pub struct PasswordLookupError;
+#[derive(Debug)]
+pub struct ApiRootLookupError;
+
+quick_error! {
+    #[derive(Debug)]
+    pub enum LoginConfigError {
+        UserLookup(err: UserLookupError) {
+            from()
+        }
+        PasswordLookup(err: PasswordLookupError) {
+            from()
+        }
+        ApiRootLookup(err: ApiRootLookupError) {
+            from()
+        }
+        IntegerConversion(err: IntegerConversionError) {
+            from()
+        }
+        StrConversion(err: StrConversionError) {
+            from()
+        }
+        UrlConversion(err: UrlConversionError) {
+            from()
+        }
+    }
+}
+
+fn get_gitlab_login_config(
+    config: &toml::Value)
+    -> Result<LoginConfig, LoginConfigError> {
+
+    let gitlab_user_value = try!(
+        config
+            .lookup("gitlab.user")
+            .ok_or(UserLookupError));
+    let gitlab_user = try!(
+        gitlab_user_value.as_str().ok_or(StrConversionError));
+
+    let gitlab_password_value = try!(
+        config
+            .lookup("gitlab.password")
+            .ok_or(PasswordLookupError));
+    let gitlab_password = try!(
+        gitlab_password_value.as_str().ok_or(StrConversionError));
+
+    let gitlab_api_root_value = try!(
+        config
+            .lookup("gitlab.api-root")
+            .ok_or(ApiRootLookupError));
+    let gitlab_api_root_string = try!(
+        gitlab_api_root_value.as_str().ok_or(StrConversionError));
+    let gitlab_api_root = try!(
+        gitlab_api_root_string.parse().map_err(|_| UrlConversionError));
+
+    Ok(LoginConfig {
+        user: gitlab_user.to_owned(),
+        password: gitlab_password.to_owned(),
+        api_root: gitlab_api_root,
+    })
 }
