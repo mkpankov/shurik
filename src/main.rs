@@ -921,23 +921,7 @@ fn main() {
     let value = open_parse_config();
     let config: Arc<toml::Value> = Arc::new(value.unwrap());
 
-    let gitlab_port =
-        config.lookup("gitlab.webhook-port")
-        .unwrap_or(
-            &toml::Value::String("10042".to_owned()))
-        .as_str()
-        .unwrap()
-        .parse().unwrap();
-    let default_address = toml::Value::String("localhost".to_owned());
-    let gitlab_address =
-        config.lookup("gitlab.webhook-address")
-        .unwrap_or(
-            &default_address)
-        .as_str()
-        .unwrap()
-        .to_owned();
-    info!("GitLab port: {}", gitlab_port);
-    info!("GitLab address: {}", gitlab_address);
+    let (gitlab_address, gitlab_port) = get_listener_config(&*config).unwrap();
 
     let mut project_sets = HashMap::new();
 
@@ -1067,4 +1051,44 @@ fn open_parse_config() -> Result<toml::Value, ConfigError> {
     let maybe_value = try!(parser.parse().ok_or(ParseError));
     let value: toml::Value = toml::Value::Table(maybe_value);
     Ok(value)
+}
+
+#[derive(Debug)]
+pub struct IntegerConversionError;
+#[derive(Debug)]
+pub struct StrConversionError;
+
+quick_error! {
+    #[derive(Debug)]
+    pub enum ListenerConfigError {
+        IntegerConversion(err: IntegerConversionError) {
+            from()
+        }
+        StrConversion(err: StrConversionError) {
+            from()
+        }
+    }
+}
+
+fn get_listener_config(
+    config: &toml::Value)
+    -> Result<(String, u16), ListenerConfigError> {
+
+    let default_port_value = toml::Value::String("10042".to_owned());
+    let gitlab_port_value = config
+        .lookup("gitlab.webhook-port")
+        .unwrap_or(&default_port_value);
+    let gitlab_port = try!(
+        gitlab_port_value.as_integer().ok_or(IntegerConversionError))
+        as u16;
+
+    let default_address_value = toml::Value::String("localhost".to_owned());
+    let gitlab_address_value = config
+        .lookup("gitlab.webhook-address")
+        .unwrap_or(&default_address_value);
+    let gitlab_address = try!(
+        gitlab_address_value.as_str().ok_or(StrConversionError)).to_owned();
+    info!("GitLab port: {}", gitlab_port);
+    info!("GitLab address: {}", gitlab_address);
+    Ok((gitlab_address, gitlab_port))
 }
