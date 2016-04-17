@@ -1156,8 +1156,9 @@ fn get_gitlab_login_config(
 }
 
 macro_rules! config_lookup_convert {
-    ($config:ident, $path:expr, $lookup_error:expr, $conversion_fn:ident,
-     $conversion_error:expr) => {
+    ($config:ident :
+     $path:expr => $lookup_error:expr,
+     $conversion_fn:ident => $conversion_error:expr) => {
         {
             let value = try!(
                 $config.lookup($path).ok_or($lookup_error));
@@ -1175,8 +1176,9 @@ fn produce_project_sets(
     let mut project_sets = HashMap::new();
 
     let project_set_slice = config_lookup_convert!(
-        config, "project-set", ProjectSetLookupError, as_slice,
-        SliceConversionError);
+        config :
+        "project-set" => ProjectSetLookupError,
+        as_slice => SliceConversionError);
 
     for project_set_toml in project_set_slice {
         let mut projects = HashMap::new();
