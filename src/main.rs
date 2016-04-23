@@ -945,9 +945,6 @@ fn main() {
         debug!("Handling ProjectSet: {} = {:?}", psid, project_set);
 
         let psa = Arc::new(project_set);
-        let psa2 = psa.clone();
-        let psa3 = psa.clone();
-        let psa4 = psa.clone();
 
         let projects = &psa.clone().projects;
         for (id, p) in projects {
@@ -957,37 +954,11 @@ fn main() {
         }
         let mr_storage = load_state(state_save_dir, psid);
         let mr_storage = Arc::new(Mutex::new(mr_storage));
-        let mrs2 = mr_storage.clone();
-        let mrs3 = mrs2.clone();
-        let mrs4 = mrs3.clone();
 
         let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
-        let queue2 = queue.clone();
-        let queue3 = queue.clone();
 
-        let config2 = config.clone();
-        let config3 = config2.clone();
-
-        let state_save_dir =
-            Arc::new(
-                config.lookup("general.state-save-dir").unwrap()
-                    .as_str().unwrap()
-                    .to_owned());
-        let ssd2 = state_save_dir.clone();
-        let ssd3 = ssd2.clone();
-
-        let builder = thread::spawn(move || {
-            handle_build_request(&*mrs3, &*queue, &*config3, &*psa2, &*ssd3, &gitlab_session);
-        });
-        builders.push(builder);
-        scan_state_and_schedule_jobs(&*mrs4, &*psa4, &*queue2);
-
-        router.post(format!("/api/v1/{}/mr", psid),
-                    move |req: &mut Request|
-                    handle_mr(req, &*mr_storage, &*psa3, &*state_save_dir));
-        router.post(format!("/api/v1/{}/comment", psid),
-                    move |req: &mut Request|
-                    handle_comment(req, &*mrs2, &*queue3, &*psa, &*ssd2));
+        launch_handlers(
+            &mut router, mr_storage, queue, psa, psid, &mut builders, config.clone(), gitlab_session);
     }
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
@@ -1258,4 +1229,56 @@ fn produce_project_sets(
     }
 
     Ok(project_sets)
+}
+
+fn launch_handlers(
+    router: &mut router::Router,
+    mr_storage: Arc<Mutex<HashMap<MrUid, MergeRequest>>>,
+    queue: Arc<(Mutex<LinkedList<WorkerTask>>, Condvar)>,
+    project_set: Arc<ProjectSet>,
+    psid: &str,
+    builders: &mut Vec<std::thread::JoinHandle<isize>>,
+    config: Arc<toml::Value>,
+    gitlab_session: Arc<gitlab::Session>) {
+
+    let state_save_dir =
+        Arc::new(
+            config.lookup("general.state-save-dir").unwrap()
+                .as_str().unwrap()
+                .to_owned());
+    {
+        let mr_storage = mr_storage.clone();
+        let queue = queue.clone();
+        let project_set = project_set.clone();
+        let state_save_dir = state_save_dir.clone();
+
+        let builder = thread::spawn(move || {
+            handle_build_request(
+                &*mr_storage, &*queue, &*config, &*project_set, &*state_save_dir, &gitlab_session);
+        });
+        builders.push(builder);
+    }
+    {
+        let mr_storage = mr_storage.clone();
+        let queue = queue.clone();
+        let project_set = project_set.clone();
+        scan_state_and_schedule_jobs(&*mr_storage, &*project_set, &*queue);
+    }
+    {
+        let mr_storage = mr_storage.clone();
+        let project_set = project_set.clone();
+        let state_save_dir = state_save_dir.clone();
+        router.post(format!("/api/v1/{}/mr", psid),
+                    move |req: &mut Request|
+                    handle_mr(req, &*mr_storage, &*project_set, &*state_save_dir));
+    }
+    {
+        let mr_storage = mr_storage.clone();
+        let queue = queue.clone();
+        let project_set = project_set.clone();
+        let state_save_dir = state_save_dir.clone();
+        router.post(format!("/api/v1/{}/comment", psid),
+                    move |req: &mut Request|
+                    handle_comment(req, &*mr_storage, &*queue, &*project_set, &*state_save_dir));
+    }
 }
