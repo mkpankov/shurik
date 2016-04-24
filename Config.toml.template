@@ -6,10 +6,10 @@ state-save-dir = "/path/to/shurik/workspace"
 
 user = "foobar"
 password = "barbaz"
-api-url = "http://gitlab.host/api/v3"
+api-root = "http://gitlab.host/api/v3"
 
 webhook-address = "your-ip-or-hostname-here"
-webhook-port = "10042"
+webhook-port = 10042
 
 ssh-key-path = "/path/to/private/ssh/key/of/shurik/for/gitlab"
 
