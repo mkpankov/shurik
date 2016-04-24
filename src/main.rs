@@ -958,7 +958,8 @@ fn main() {
         let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
 
         launch_handlers(
-            &mut router, mr_storage, queue, psa, psid, &mut builders, config.clone(), gitlab_session);
+            &mut router, mr_storage, queue, psa, psid, &mut builders, config.clone(), gitlab_session)
+            .unwrap();
     }
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
@@ -1077,6 +1078,24 @@ quick_error! {
 quick_error! {
     #[derive(Debug)]
     pub enum ProjectSetProductionError {
+        GenericLookup(err: GenericLookupError) {
+            from()
+        }
+        IntegerConversion(err: IntegerConversionError) {
+            from()
+        }
+        StrConversion(err: StrConversionError) {
+            from()
+        }
+        SliceConversion(err: SliceConversionError) {
+            from()
+        }
+    }
+}
+
+quick_error! {
+    #[derive(Debug)]
+    pub enum HandlersLaunchError {
         GenericLookup(err: GenericLookupError) {
             from()
         }
@@ -1239,13 +1258,19 @@ fn launch_handlers(
     psid: &str,
     builders: &mut Vec<std::thread::JoinHandle<isize>>,
     config: Arc<toml::Value>,
-    gitlab_session: Arc<gitlab::Session>) {
+    gitlab_session: Arc<gitlab::Session>) -> Result<(), HandlersLaunchError> {
 
-    let state_save_dir =
-        Arc::new(
-            config.lookup("general.state-save-dir").unwrap()
-                .as_str().unwrap()
-                .to_owned());
+    let state_save_dir;
+    {
+        let config: &toml::Value = &*config;
+        let state_save_dir_ = config_lookup_convert!(
+            config :
+            "general.state-save-dir" => GenericLookupError,
+            as_str => StrConversionError)
+            .to_owned();
+        state_save_dir = Arc::new(state_save_dir_);
+    }
+
     {
         let mr_storage = mr_storage.clone();
         let queue = queue.clone();
@@ -1281,4 +1306,5 @@ fn launch_handlers(
                     move |req: &mut Request|
                     handle_comment(req, &*mr_storage, &*queue, &*project_set, &*state_save_dir));
     }
+    Ok(())
 }
