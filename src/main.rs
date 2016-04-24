@@ -939,27 +939,9 @@ fn main() {
     let gitlab_session = Arc::new(gitlab_session);
 
     for (psid, project_set) in project_sets.into_iter() {
-        let mut reverse_project_map = HashMap::new();
-        let gitlab_session = gitlab_session.clone();
-
-        debug!("Handling ProjectSet: {} = {:?}", psid, project_set);
-
-        let psa = Arc::new(project_set);
-
-        let projects = &psa.clone().projects;
-        for (id, p) in projects {
-            if let Some(ps) = reverse_project_map.insert(id.clone(), psid) {
-                panic!("A project with id {}: {:?} is already present in project set with id {}: {:?}. Project can be present only in one project set.", id, p, psid, ps);
-            }
-        }
-        let mr_storage = load_state(state_save_dir, psid);
-        let mr_storage = Arc::new(Mutex::new(mr_storage));
-
-        let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
-
-        launch_handlers(
-            &mut router, mr_storage, queue, psa, psid, &mut builders, config.clone(), gitlab_session)
-            .unwrap();
+        init_project_set(
+            gitlab_session.clone(), psid, project_set, state_save_dir,
+            &mut router, &mut builders, config.clone());
     }
     Iron::new(router).http(
         (&*gitlab_address, gitlab_port))
@@ -1307,4 +1289,36 @@ fn launch_handlers(
                     handle_comment(req, &*mr_storage, &*queue, &*project_set, &*state_save_dir));
     }
     Ok(())
+}
+
+fn init_project_set(
+    gitlab_session: Arc<gitlab::Session>,
+    psid: &str,
+    project_set: ProjectSet,
+    state_save_dir: &str,
+    mut router: &mut router::Router,
+    mut builders: &mut Vec<std::thread::JoinHandle<isize>>,
+    config: Arc<toml::Value>)
+{
+    let mut reverse_project_map = HashMap::new();
+    let gitlab_session = gitlab_session.clone();
+
+    debug!("Handling ProjectSet: {} = {:?}", psid, project_set);
+
+    let psa = Arc::new(project_set);
+
+    let projects = &psa.clone().projects;
+    for (id, p) in projects {
+        if let Some(ps) = reverse_project_map.insert(id.clone(), psid) {
+            panic!("A project with id {}: {:?} is already present in project set with id {}: {:?}. Project can be present only in one project set.", id, p, psid, ps);
+        }
+    }
+    let mr_storage = load_state(state_save_dir, psid);
+    let mr_storage = Arc::new(Mutex::new(mr_storage));
+
+    let queue = Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
+
+    launch_handlers(
+        &mut router, mr_storage, queue, psa, psid, &mut builders, config.clone(), gitlab_session)
+        .unwrap();
 }
