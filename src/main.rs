@@ -930,12 +930,7 @@ fn main() {
     let state_save_dir = config.lookup("general.state-save-dir").unwrap().as_str().unwrap();
 
     let gitlab_login_config = get_gitlab_login_config(&*config).unwrap();
-    let gitlab_user = &gitlab_login_config.user;
-    let gitlab_password = &gitlab_login_config.password;
-    let gitlab_api_root = gitlab_login_config.api_root;
-
-    let gitlab_api = gitlab::Api::new(gitlab_api_root).unwrap();
-    let gitlab_session = gitlab_api.login(gitlab_user, gitlab_password).unwrap();
+    let gitlab_session = login_to_gitlab(gitlab_login_config).unwrap();
     let gitlab_session = Arc::new(gitlab_session);
 
     for (psid, project_set) in project_sets.into_iter() {
@@ -999,7 +994,7 @@ fn get_gitlab_listener_config(
     config: &toml::Value)
     -> Result<(String, u16), ListenerConfigError> {
 
-    let default_port_value = toml::Value::String("10042".to_owned());
+    let default_port_value = toml::Value::Integer(10042);
     let gitlab_port_value = config
         .lookup("gitlab.webhook-port")
         .unwrap_or(&default_port_value);
@@ -1321,4 +1316,29 @@ fn init_project_set(
     launch_handlers(
         &mut router, mr_storage, queue, psa, psid, &mut builders, config.clone(), gitlab_session)
         .unwrap();
+}
+
+quick_error! {
+    #[derive(Debug)]
+    pub enum GitLabLoginError {
+        Parse(err: url::ParseError) {
+            from()
+        }
+        Login(err: gitlab::LoginError) {
+            from()
+        }
+    }
+}
+
+fn login_to_gitlab(
+    gitlab_login_config: LoginConfig)
+    -> Result<gitlab::Session, GitLabLoginError>
+{
+    let gitlab_user = &gitlab_login_config.user;
+    let gitlab_password = &gitlab_login_config.password;
+    let gitlab_api_root = gitlab_login_config.api_root;
+
+    let gitlab_api = try!(gitlab::Api::new(gitlab_api_root));
+    let gitlab_session = gitlab_api.login(gitlab_user, gitlab_password).unwrap();
+    Ok(gitlab_session)
 }
