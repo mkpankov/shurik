@@ -62,7 +62,7 @@ enum SubStatusOpen {
 #[derive(RustcDecodable, RustcEncodable)]
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum Status {
-    Open(SubStatusOpen),
+    Open,
     Merged,
     Closed,
 }
@@ -157,14 +157,8 @@ fn update_or_create_mr(
     new_approval_status: Option<ApprovalStatus>,
     new_merge_status: Option<MergeStatus>) {
     if let Some(mut existing_mr) = storage.get_mut(&id) {
-        let is_waiting_for_result_dispatch_acceptable = |s| {
-            if let &Status::Open(SubStatusOpen::WaitingForResultDispatch(_, _)) = s {
-                true
-            } else {
-                false
-            }
-        };
-        if old_statuses.iter().any(|x| *x == existing_mr.status || is_waiting_for_result_dispatch_acceptable(x))
+        //FIXME: Status::Open
+        if old_statuses.iter().any(|x| *x == existing_mr.status)
             || old_statuses.len() == 0
         {
             if let Some(new_status) = new_status {
@@ -188,7 +182,8 @@ fn update_or_create_mr(
         id: id,
         human_number: human_number,
         checkout_sha: new_checkout_sha.unwrap().to_owned(),
-        status: new_status.unwrap_or(Status::Open(SubStatusOpen::WaitingForReview)),
+        //FIXME: Status::Open
+        status: new_status.unwrap_or(Status::Open),
         approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
         merge_status: new_merge_status.unwrap_or(MergeStatus::CanBeMerged),
     };
@@ -285,10 +280,12 @@ fn handle_mr(
     }
 
     let new_status = match action {
-        "open" | "reopen" => Status::Open(SubStatusOpen::WaitingForReview),
+        //FIXME: Status::Open
+        "open" | "reopen" => Status::Open,
         "close" => Status::Closed,
         "merge" => Status::Merged,
-        "update" => Status::Open(SubStatusOpen::WaitingForReview),
+        //FIXME: Status::Open
+        "update" => Status::Open,
         _ => panic!("Unexpected MR action: {}", action),
     };
 
@@ -299,7 +296,8 @@ fn handle_mr(
     };
 
     let id = MrUid { target_project_id: target_project_id, id: mr_id };
-    if let Status::Open(_) = new_status {
+    //FIXME: Status::Open
+    if let Status::Open = new_status {
         ;
     } else {
         mr_storage.lock().unwrap().remove(&id);
@@ -388,8 +386,9 @@ fn handle_comment(
         match &note[mention_len..] {
             "r+" | "одобряю" => {
                 if is_comment_author_reviewer {
-                    old_statuses.push(Status::Open(SubStatusOpen::WaitingForReview));
-                    new_status = Some(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
+                    //FIXME: Status::Open
+                    old_statuses.push(Status::Open);
+                    new_status = Some(Status::Open);
                     new_approval_status = Some(ApprovalStatus::Approved);
                     needs_notification = true;
                 } else {
@@ -399,10 +398,9 @@ fn handle_comment(
             },
             "r-" | "отказываю" => {
                 if is_comment_author_reviewer {
-                    old_statuses.push(Status::Open(SubStatusOpen::WaitingForCi));
-                    old_statuses.push(Status::Open(SubStatusOpen::WaitingForResultDispatch(None, None)));
-                    old_statuses.push(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
-                    new_status = Some(Status::Open(SubStatusOpen::WaitingForReview));
+                    //FIXME: Status::Open
+                    old_statuses.push(Status::Open);
+                    new_status = Some(Status::Open);
                     new_approval_status = Some(ApprovalStatus::Rejected);
                 } else {
                     info!("Comment author {} is not reviewer. Reviewers: {:?}", username, reviewers);
@@ -411,7 +409,8 @@ fn handle_comment(
                 ;
             },
             "try" | "попробуй" => {
-                new_status = Some(Status::Open(SubStatusOpen::Updating(SubStatusUpdating::NotStarted)));
+                //FIXME: Status::Open
+                new_status = Some(Status::Open);
                 needs_notification = true;
             },
             _ => {
@@ -487,12 +486,9 @@ fn perform_or_continue_jenkins_build(
         debug!("MR to work on: {:?}", mr);
         current_status = mr.status.clone();
     };
-    if let Status::Open(sso) = current_status {
-        if let SubStatusOpen::Building(ssb) = sso {
-            current_build_status = ssb;
-        } else {
-            panic!("MR {:?} is open, but not building", mr_id);
-        }
+    //FIXME: Status::Open
+    if let Status::Open = current_status {
+        unreachable!();
     } else {
         panic!("MR {:?} is not open", mr_id);
     }
@@ -503,9 +499,8 @@ fn perform_or_continue_jenkins_build(
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            r.status =
-                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Queued(
-                    queue_item_url.clone())));
+            //FIXME: Status::Open
+            r.status = Status::Open;
         }
         current_build_status = Queued(queue_item_url.clone());
         save_state(state_save_dir, &project_set.name, mr_storage);
@@ -517,9 +512,8 @@ fn perform_or_continue_jenkins_build(
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            r.status =
-                Status::Open(SubStatusOpen::Building(SubStatusBuilding::InProgress(
-                    build_url.clone())));
+            //FIXME: Status::Open
+            r.status = Status::Open;
         }
         current_build_status = InProgress(build_url.clone());
         save_state(state_save_dir, &project_set.name, mr_storage);
@@ -530,9 +524,8 @@ fn perform_or_continue_jenkins_build(
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            r.status =
-                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(
-                    build_url.clone(), result.clone())));
+            //FIXME: Status::Open
+            r.status = Status::Open;
         }
         current_build_status = Finished(build_url.clone(), result.clone());
         save_state(state_save_dir, &project_set.name, mr_storage);
@@ -587,12 +580,13 @@ fn handle_build_request(
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            if let Status::Open(SubStatusOpen::Updating(SubStatusUpdating::Finished)) = r.status {
+            //FIXME: Status::Open
+            if let Status::Open = r.status {
                 ;
             } else {
-                if let Status::Open(SubStatusOpen::Updating(_)) = r.status {
-                    r.status =
-                        Status::Open(SubStatusOpen::Updating(SubStatusUpdating::InProgress));
+                if let Status::Open = r.status {
+                    unreachable!();
+                    r.status = Status::Open;
                     do_update = true;
                 }
             }
@@ -638,9 +632,9 @@ fn handle_build_request(
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            if let Status::Open(SubStatusOpen::Updating(SubStatusUpdating::InProgress)) = r.status {
-                r.status =
-                    Status::Open(SubStatusOpen::Updating(SubStatusUpdating::Finished));
+            //FIXME: Status::Open
+            if let Status::Open = r.status {
+                r.status = Status::Open;
             }
         }
         save_state(state_save_dir, &project_set.name, mr_storage);
@@ -658,9 +652,9 @@ fn handle_build_request(
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            if let Status::Open(SubStatusOpen::Updating(SubStatusUpdating::Finished)) = r.status {
-                r.status =
-                    Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
+            //FIXME: Status::Open
+            if let Status::Open = r.status {
+                r.status = Status::Open;
             }
         }
         save_state(state_save_dir, &project_set.name, mr_storage);
@@ -669,14 +663,16 @@ fn handle_build_request(
         {
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
-            if let Status::Open(SubStatusOpen::WaitingForCi) = r.status {
-                r.status =
-                    Status::Open(SubStatusOpen::Building(SubStatusBuilding::NotStarted));
+            //FIXME: Status::Open
+            if let Status::Open = r.status {
+                r.status = Status::Open;
             }
-            if let Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(_, _))) = r.status {
+            //FIXME: Status::Open
+            if let Status::Open = r.status {
                 ;
             } else {
-                if let Status::Open(SubStatusOpen::Building(_)) = r.status {
+                unreachable!();
+                if let Status::Open = r.status {
                     do_build = true;
                 }
             }
@@ -698,23 +694,15 @@ fn handle_build_request(
             let mrs = mr_storage.lock().unwrap();
             let r = mrs.get(&mr_id).unwrap();
             match r.status {
-                Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(ref bu, ref rs))) => {
-                    build_url = bu.clone();
-                    result_string = rs.clone();
+                //FIXME: Status::Open
+                Status::Open => {
+                    build_url = "".to_owned();
+                    result_string = "".to_owned();
                 },
-                Status::Open(SubStatusOpen::WaitingForResultDispatch(ref bu, ref rs)) => {
-                    info!("MR is already waiting for result dispatch");
-                    if let Some(ref bu) = *bu {
-                        build_url = bu.clone();
-                    } else {
-                        panic!("Expected status to have build url, but it's {:?}'", bu);
-                    }
-                    if let Some(ref rs) = *rs {
-                        result_string = rs.clone();
-                    } else {
-                        panic!("Expected status to have result string, but it's {:?}'", rs);
-                    }
-                },
+                // Status::Open => {
+                //     info!("MR is already waiting for result dispatch");
+                //     unreachable!();
+                // },
                 _ => panic!("Expected finished build or waiting for result dispatch, but status is {:?}", r.status),
             }
         }
@@ -723,10 +711,10 @@ fn handle_build_request(
             let mut mrs = mr_storage.lock().unwrap();
             let mut r = mrs.get_mut(&mr_id).unwrap();
             let current_status = r.status.clone();
-            if let Status::Open(SubStatusOpen::Building(SubStatusBuilding::Finished(build_url, result_string))) = current_status
+            //FIXME: Status::Open
+            if let Status::Open = current_status
             {
-                r.status =
-                    Status::Open(SubStatusOpen::WaitingForResultDispatch(Some(build_url), Some(result_string)));
+                r.status = Status::Open;
             }
         }
         save_state(state_save_dir, &project_set.name, mr_storage);
@@ -763,8 +751,9 @@ fn handle_build_request(
             let request = mr_storage_locked.get_mut(&mr_id).unwrap();
             let result_string;
             match request.status {
-                Status::Open(SubStatusOpen::WaitingForResultDispatch(_, Some(ref rs))) => {
-                    result_string = rs;
+                //FIXME: Status::Open
+                Status::Open => {
+                    result_string = "".to_owned();
                 },
                 ref r => panic!("Expected status to be waiting for result dispatch, but got {:?}", r),
             }
@@ -823,10 +812,10 @@ fn handle_build_request(
             {
                 let mut mrs = mr_storage.lock().unwrap();
                 let mut r = mrs.get_mut(&mr_id).unwrap();
-                if let Status::Open(SubStatusOpen::WaitingForResultDispatch(_, _)) = r.status
+                //FIXME: Status::Open
+                if let Status::Open = r.status
                 {
-                    r.status =
-                        Status::Open(SubStatusOpen::WaitingForReview);
+                    r.status = Status::Open;
                 }
             }
             save_state(state_save_dir, &project_set.name, mr_storage);
@@ -881,27 +870,28 @@ fn scan_state_and_schedule_jobs(
 
         let ref status = mr.status;
         match *status {
-            Open(ref substatus_open) => {
+            //FIXME: Status::Open
+            Open => {
                 use SubStatusOpen::*;
 
-                match *substatus_open {
-                    Updating(_) | WaitingForCi | Building(_) | WaitingForResultDispatch(_, _) => {
-                        let job_type = match mr.approval_status {
-                            ApprovalStatus::Approved => JobType::Merge,
-                            _ => JobType::Try,
-                        };
-                        let new_task = WorkerTask {
-                            id: mr.id,
-                            job_type: job_type,
-                            approval_status: mr.approval_status,
-                        };
-                        let &(ref list, ref cvar) = queue;
-                        list.lock().unwrap().push_back(new_task);
-                        cvar.notify_one();
-                        info!("Notified...");
-                    },
-                    _ => {},
-                }
+                // match *substatus_open {
+                //     Updating(_) | WaitingForCi | Building(_) | WaitingForResultDispatch(_, _) => {
+                //         let job_type = match mr.approval_status {
+                //             ApprovalStatus::Approved => JobType::Merge,
+                //             _ => JobType::Try,
+                //         };
+                //         let new_task = WorkerTask {
+                //             id: mr.id,
+                //             job_type: job_type,
+                //             approval_status: mr.approval_status,
+                //         };
+                //         let &(ref list, ref cvar) = queue;
+                //         list.lock().unwrap().push_back(new_task);
+                //         cvar.notify_one();
+                //         info!("Notified...");
+                //     },
+                //     _ => {},
+                // }
             }
             _ => {},
         }
