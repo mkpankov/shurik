@@ -98,6 +98,7 @@ struct WorkerTask {
     id: MrUid,
     job_type: JobType,
     approval_status: ApprovalStatus,
+    mr: MergeRequest,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -157,7 +158,6 @@ fn update_or_create_mr(
     new_approval_status: Option<ApprovalStatus>,
     new_merge_status: Option<MergeStatus>) {
     if let Some(mut existing_mr) = storage.get_mut(&id) {
-        //FIXME: Status::Open
         if old_statuses.iter().any(|x| *x == existing_mr.status)
             || old_statuses.len() == 0
         {
@@ -182,7 +182,6 @@ fn update_or_create_mr(
         id: id,
         human_number: human_number,
         checkout_sha: new_checkout_sha.unwrap().to_owned(),
-        //FIXME: Status::Open
         status: new_status.unwrap_or(Status::Open),
         approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
         merge_status: new_merge_status.unwrap_or(MergeStatus::CanBeMerged),
@@ -279,13 +278,25 @@ fn handle_mr(
         *ssh_url_ref = ssh_url.to_owned();
     }
 
+    let id = MrUid { target_project_id: target_project_id, id: mr_id };
+
     let new_status = match action {
-        //FIXME: Status::Open
         "open" | "reopen" => Status::Open,
         "close" => Status::Closed,
         "merge" => Status::Merged,
-        //FIXME: Status::Open
-        "update" => Status::Open,
+        "update" => {
+            let status;
+            {
+                let mr_storage = mr_storage.lock().unwrap();
+                let maybe_mr = mr_storage.get(&id);
+                if let Some(mr) = maybe_mr {
+                    status = mr.status.clone();
+                } else {
+                    status = Status::Open
+                }
+                status
+            }
+        },
         _ => panic!("Unexpected MR action: {}", action),
     };
 
@@ -295,13 +306,10 @@ fn handle_mr(
         _ => MergeStatus::CanNotBeMerged,
     };
 
-    let id = MrUid { target_project_id: target_project_id, id: mr_id };
-    //FIXME: Status::Open
-    if let Status::Open = new_status {
-        ;
-    } else {
+    if let Status::Open = new_status {;} else {
         mr_storage.lock().unwrap().remove(&id);
     }
+
     {
         update_or_create_mr(
             &mut *mr_storage.lock().unwrap(),
@@ -386,7 +394,6 @@ fn handle_comment(
         match &note[mention_len..] {
             "r+" | "одобряю" => {
                 if is_comment_author_reviewer {
-                    //FIXME: Status::Open
                     old_statuses.push(Status::Open);
                     new_status = Some(Status::Open);
                     new_approval_status = Some(ApprovalStatus::Approved);
@@ -398,7 +405,6 @@ fn handle_comment(
             },
             "r-" | "отказываю" => {
                 if is_comment_author_reviewer {
-                    //FIXME: Status::Open
                     old_statuses.push(Status::Open);
                     new_status = Some(Status::Open);
                     new_approval_status = Some(ApprovalStatus::Rejected);
@@ -409,7 +415,7 @@ fn handle_comment(
                 ;
             },
             "try" | "попробуй" => {
-                //FIXME: Status::Open
+                old_statuses.push(Status::Open);
                 new_status = Some(Status::Open);
                 needs_notification = true;
             },
@@ -442,10 +448,16 @@ fn handle_comment(
                 Some(ApprovalStatus::Approved) => JobType::Merge,
                 _ => JobType::Try,
             };
+            let mr;
+            {
+                let mr_storage = mr_storage.lock().unwrap();
+                mr = mr_storage[&id].clone();
+            }
             let new_task = WorkerTask {
                 id: id,
                 job_type: job_type,
                 approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
+                mr: mr,
             };
 
             let &(ref list, ref cvar) = worker_queue;
