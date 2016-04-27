@@ -94,7 +94,7 @@ struct MergeRequest {
 }
 
 #[derive(Debug)]
-struct WorkerTask {
+struct Job {
     id: MrUid,
     job_type: JobType,
     approval_status: ApprovalStatus,
@@ -326,7 +326,7 @@ fn handle_mr(
 fn handle_comment(
     req: &mut Request,
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
-    worker_queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
+    worker_queue: &(Mutex<LinkedList<Job>>, Condvar),
     project_set: &ProjectSet,
     state_save_dir: &str)
     -> IronResult<Response> {
@@ -448,7 +448,7 @@ fn handle_comment(
                 let mr_storage = mr_storage.lock().unwrap();
                 mr = mr_storage[&id].clone();
             }
-            let new_task = WorkerTask {
+            let new_task = Job {
                 id: id,
                 job_type: job_type,
                 approval_status: new_approval_status.unwrap_or(ApprovalStatus::Pending),
@@ -546,7 +546,7 @@ fn perform_or_continue_jenkins_build(
 
 fn handle_build_request(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
-    queue: &(Mutex<LinkedList<WorkerTask>>, Condvar),
+    queue: &(Mutex<LinkedList<Job>>, Condvar),
     config: &toml::Value,
     project_set: &ProjectSet,
     state_save_dir: &str,
@@ -869,7 +869,7 @@ fn mr_try_merge_and_report_if_impossible(mr: &MergeRequest,
 fn scan_state_and_schedule_jobs(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     _project_set: &ProjectSet,
-    queue: &(Mutex<LinkedList<WorkerTask>>, Condvar))
+    queue: &(Mutex<LinkedList<Job>>, Condvar))
 {
     let mr_storage = &*mr_storage.lock().unwrap();
     for mr in mr_storage.values() {
@@ -887,7 +887,7 @@ fn scan_state_and_schedule_jobs(
                 //             ApprovalStatus::Approved => JobType::Merge,
                 //             _ => JobType::Try,
                 //         };
-                //         let new_task = WorkerTask {
+                //         let new_task = Job {
                 //             id: mr.id,
                 //             job_type: job_type,
                 //             approval_status: mr.approval_status,
@@ -1227,7 +1227,7 @@ fn produce_project_sets(
 fn launch_handlers(
     router: &mut router::Router,
     mr_storage: Arc<Mutex<HashMap<MrUid, MergeRequest>>>,
-    queue: Arc<(Mutex<LinkedList<WorkerTask>>, Condvar)>,
+    queue: Arc<(Mutex<LinkedList<Job>>, Condvar)>,
     project_set: Arc<ProjectSet>,
     psid: &str,
     builders: &mut Vec<std::thread::JoinHandle<isize>>,
