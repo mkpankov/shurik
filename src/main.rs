@@ -235,17 +235,13 @@ fn handle_mr(
     mr_storage: &Mutex<HashMap<MrUid, MergeRequest>>,
     project_set: &ProjectSet,
     state_save_dir: &str)
-    -> IronResult<Response> {
-    debug!("handle_mr started            : {}", time::precise_time_ns());
+    -> IronResult<Response>
+{
     let ref mut body = req.body;
     let mut s: String = String::new();
     body.read_to_string(&mut s).unwrap();
 
-    debug!("{}", req.url);
-    debug!("{}", s);
-
     let json: serde_json::value::Value = serde_json::from_str(&s).unwrap();
-    debug!("object? {}", json.is_object());
     let object_kind = json.lookup("object_kind").unwrap().as_string().unwrap();
     if object_kind != "merge_request" {
         error!("This endpoint only accepts objects with \"object_kind\":\"merge_request\"");
@@ -324,7 +320,6 @@ fn handle_mr(
     }
 
     save_state(state_save_dir, &project_set.name, mr_storage);
-    debug!("handle_mr finished           : {}", time::precise_time_ns());
     Ok(Response::with(status::Ok))
 }
 
